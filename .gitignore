@@ -2,6 +2,7 @@
 /target/
 /dist/
 /admin-web/dist/
+/web-api/dist/
 
 # Python cache
 __pycache__/
