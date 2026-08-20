@@ -1,0 +1,55 @@
+app = "imabird-buzz-relay"
+primary_region = "lhr"
+
+[build]
+  image = "ghcr.io/block/buzz:main@sha256:eda48df9eebef67793f5b039169ddc09768e5c21fb0856cf85c0d74ebe49f52b"
+
+[env]
+  BUZZ_ALLOW_NIP_OA_AUTH = "true"
+  BUZZ_AUTO_MIGRATE = "true"
+  BUZZ_BIND_ADDR = "0.0.0.0:3000"
+  BUZZ_GIT_CONFORMANCE_PROBE = "true"
+  BUZZ_GIT_REPO_PATH = "/data/git"
+  BUZZ_HEALTH_PORT = "8080"
+  BUZZ_HUDDLE_AUDIO_AVAILABLE = "true"
+  BUZZ_MEDIA_BASE_URL = "https://imabird-buzz-relay.fly.dev/media"
+  BUZZ_METRICS_PORT = "9102"
+  BUZZ_REQUIRE_AUTH_TOKEN = "true"
+  BUZZ_REQUIRE_RELAY_MEMBERSHIP = "true"
+  BUZZ_S3_ADDRESSING_STYLE = "virtual"
+  BUZZ_S3_REGION = "auto"
+  RELAY_URL = "wss://imabird-buzz-relay.fly.dev"
+  RUST_LOG = "buzz_relay=info,buzz_db=info,buzz_auth=info,buzz_pubsub=info,tower_http=info"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 1000
+    hard_limit = 2000
+
+[[mounts]]
+  source = "buzz_git_data"
+  destination = "/data/git"
+  initial_size = "1gb"
+
+[checks]
+  [checks.readiness]
+    port = 8080
+    type = "http"
+    method = "get"
+    path = "/_readiness"
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "45s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
