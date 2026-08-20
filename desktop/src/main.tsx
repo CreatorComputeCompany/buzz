@@ -33,6 +33,15 @@ const ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX = "buzz-onboarding-complete.v1:";
 const DEV_STATE_RESET_PARAM = "resetDevState";
 const WEB_PREVIEW_MODE = "web-preview";
 const WEB_RELAY_PREVIEW_MODE = "web-relay-preview";
+const WEB_CLIENT_MODE = "web-client";
+
+type WebSession = {
+  pubkey: string;
+  username: string;
+  relayHttpUrl: string;
+  relayWsUrl: string;
+  signerUrl: string;
+};
 
 function requireLoopbackRelayUrl(value: string | undefined): URL {
   if (!value) {
@@ -76,8 +85,47 @@ function resetDevWebviewStateFromUrl() {
 async function configureBrowserBridge() {
   const isWebPreview = import.meta.env.MODE === WEB_PREVIEW_MODE;
   const isWebRelayPreview = import.meta.env.MODE === WEB_RELAY_PREVIEW_MODE;
+  const isWebClient = import.meta.env.MODE === WEB_CLIENT_MODE;
+  if (isWebClient) {
+    const response = await fetch("/api/buzz/session", {
+      credentials: "include",
+    });
+    if (response.status === 401) return false;
+    if (!response.ok)
+      throw new Error((await response.text()) || "Unable to start Buzz");
+    const session = (await response.json()) as WebSession;
+    const e2eWindow = window as E2eWindow;
+    e2eWindow.__BUZZ_E2E__ = {
+      identity: {
+        pubkey: session.pubkey,
+        signerUrl: session.signerUrl,
+        username: session.username,
+      },
+      mode: "relay",
+      relayHttpUrl: session.relayHttpUrl,
+      relayWsUrl: session.relayWsUrl,
+    };
+    const community = {
+      addedAt: new Date().toISOString(),
+      id: E2E_COMMUNITY_ID,
+      name: "Buzz",
+      pubkey: session.pubkey,
+      relayUrl: session.relayWsUrl,
+    };
+    window.localStorage.setItem(
+      "buzz-communities",
+      JSON.stringify([community]),
+    );
+    window.localStorage.setItem("buzz-active-community-id", E2E_COMMUNITY_ID);
+    window.localStorage.setItem(
+      `${ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX}${session.pubkey}`,
+      "true",
+    );
+    return true;
+  }
+
   if (!import.meta.env.DEV && !isWebPreview && !isWebRelayPreview) {
-    return;
+    return true;
   }
 
   const url = new URL(window.location.href);
@@ -86,7 +134,7 @@ async function configureBrowserBridge() {
     !isWebRelayPreview &&
     url.searchParams.get("e2e") !== "mock"
   ) {
-    return;
+    return true;
   }
 
   const e2eWindow = window as E2eWindow;
@@ -120,6 +168,7 @@ async function configureBrowserBridge() {
     `${ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX}${relayIdentity?.pubkey ?? E2E_DEFAULT_PUBKEY}`,
     "true",
   );
+  return true;
 }
 
 function renderApp() {
@@ -160,7 +209,8 @@ async function installE2eBridgeIfConfigured() {
       import.meta.env.DEV ||
       import.meta.env.MODE === "e2e" ||
       import.meta.env.MODE === WEB_PREVIEW_MODE ||
-      import.meta.env.MODE === WEB_RELAY_PREVIEW_MODE
+      import.meta.env.MODE === WEB_RELAY_PREVIEW_MODE ||
+      import.meta.env.MODE === WEB_CLIENT_MODE
     ) ||
     !(window as E2eWindow).__BUZZ_E2E__
   ) {
@@ -173,7 +223,14 @@ async function installE2eBridgeIfConfigured() {
 
 async function bootstrap() {
   resetDevWebviewStateFromUrl();
-  await configureBrowserBridge();
+  const authenticated = await configureBrowserBridge();
+  if (!authenticated) {
+    const { WebAuthGate } = await import("@/features/web-auth/WebAuthGate");
+    ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+      <WebAuthGate />,
+    );
+    return;
+  }
   recoverLocalStorageQuotaOnStartup();
   initializeConversationDensityPreference();
   initializeFontSizePreference();

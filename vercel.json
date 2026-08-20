@@ -1,7 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm -C desktop build:web-preview",
+  "buildCommand": "pnpm -C desktop build:web-client",
   "outputDirectory": "desktop/dist",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://imabird-buzz-web-api.fly.dev/api/:path*"
+    },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
 }

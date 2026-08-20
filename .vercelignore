@@ -1,0 +1,14 @@
+.git
+.hermit
+node_modules
+**/node_modules
+**/dist
+target
+crates
+benchmarks
+bin
+admin-web
+web
+web-api
+deploy
+docs

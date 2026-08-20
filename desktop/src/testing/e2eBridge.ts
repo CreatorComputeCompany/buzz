@@ -77,8 +77,9 @@ import {
 } from "@/shared/lib/linkPreviewSnapshot";
 
 type TestIdentity = {
-  privateKey: string;
+  privateKey?: string;
   pubkey: string;
+  signerUrl?: string;
   username: string;
 };
 
@@ -6032,6 +6033,20 @@ async function signWithIdentity(
     tags: string[][];
   },
 ) {
+  if (identity.signerUrl) {
+    const response = await fetch(identity.signerUrl, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(template),
+    });
+    await assertOk(response);
+    return (await response.json()) as RelayEvent;
+  }
+
+  if (!identity.privateKey) {
+    throw new Error("Identity signer required.");
+  }
   const secretKey = hexToBytes(identity.privateKey);
 
   return finalizeEvent(
@@ -6043,6 +6058,43 @@ async function signWithIdentity(
     },
     secretKey,
   );
+}
+
+function encodeBase64Utf8(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+async function nip98Authorization(
+  identity: TestIdentity,
+  url: string,
+  method: string,
+  body: string,
+): Promise<string> {
+  const tags = [
+    ["u", url],
+    ["method", method.toUpperCase()],
+    ["nonce", crypto.randomUUID()],
+  ];
+  if (body) tags.push(["payload", await sha256Hex(body)]);
+  const event = await signWithIdentity(identity, {
+    kind: 27235,
+    content: "",
+    tags,
+  });
+  return `Nostr ${encodeBase64Utf8(JSON.stringify(event))}`;
 }
 
 async function assertOk(response: Response) {
@@ -6070,13 +6122,19 @@ async function relayJsonRequest<T>(
 ): Promise<T> {
   const identity = getRelayIdentity(config);
   const headers = new Headers(init.headers);
+  const url = `${getRelayHttpUrl(config)}${path}`;
+  const method = init.method ?? "GET";
+  const body = typeof init.body === "string" ? init.body : "";
 
-  headers.set("X-Pubkey", identity.pubkey);
+  headers.set(
+    "Authorization",
+    await nip98Authorization(identity, url, method, body),
+  );
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${getRelayHttpUrl(config)}${path}`, {
+  const response = await fetch(url, {
     ...init,
     headers,
   });
@@ -6101,16 +6159,13 @@ async function relayQuery(
     throw new Error(P_GATED_REJECTION_MESSAGE);
   }
 
-  const response = await fetch(`${getRelayHttpUrl(config)}/query`, {
+  return relayJsonRequest(config, "/query", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Pubkey": identity.pubkey,
     },
     body: JSON.stringify(filters),
   });
-  await assertOk(response);
-  return response.json() as Promise<RelayEvent[]>;
 }
 
 async function submitSignedEvent(
@@ -6808,7 +6863,7 @@ async function handleCreateChannel(
   return {
     id: channelId,
     name: getTag("name") ?? args.name,
-    description: getTag("about") ?? args.description ?? null,
+    description: getTag("about") ?? args.description ?? "",
     channel_type: args.channelType,
     visibility: args.visibility,
     topic: null,
@@ -8592,7 +8647,7 @@ function upsertMockPersonaEvent(
     }),
   };
   const event: RelayEvent = identity
-    ? finalizeEvent(template, hexToBytes(identity.privateKey))
+    ? finalizeEvent(template, hexToBytes(identity.privateKey as string))
     : {
         ...template,
         id: mockEventId(),
