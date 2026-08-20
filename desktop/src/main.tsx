@@ -28,8 +28,6 @@ type E2eWindow = Window & {
 };
 
 const E2E_DEFAULT_PUBKEY = "deadbeef".repeat(8);
-const LOCAL_RELAY_PREVIEW_PUBKEY =
-  "e5ebc6cdb579be112e336cc319b5989b4bb6af11786ea90dbe52b5f08d741b34";
 const E2E_COMMUNITY_ID = "e2e-default-community";
 const ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX = "buzz-onboarding-complete.v1:";
 const DEV_STATE_RESET_PARAM = "resetDevState";
@@ -75,7 +73,7 @@ function resetDevWebviewStateFromUrl() {
   window.history.replaceState(window.history.state, "", url);
 }
 
-function configureBrowserBridge() {
+async function configureBrowserBridge() {
   const isWebPreview = import.meta.env.MODE === WEB_PREVIEW_MODE;
   const isWebRelayPreview = import.meta.env.MODE === WEB_RELAY_PREVIEW_MODE;
   if (!import.meta.env.DEV && !isWebPreview && !isWebRelayPreview) {
@@ -95,8 +93,14 @@ function configureBrowserBridge() {
   const relayUrl = isWebRelayPreview
     ? requireLoopbackRelayUrl(import.meta.env.VITE_BUZZ_RELAY_URL)
     : null;
+  const relayIdentity = relayUrl
+    ? (
+        await import("@/testing/webRelayPreviewIdentity")
+      ).selectWebRelayPreviewIdentity(url.searchParams)
+    : null;
   e2eWindow.__BUZZ_E2E__ ??= relayUrl
     ? {
+        identity: relayIdentity ?? undefined,
         mode: "relay",
         relayHttpUrl: relayUrl.href.replace(/^ws:/, "http:").replace(/\/$/, ""),
         relayWsUrl: relayUrl.href.replace(/\/$/, ""),
@@ -107,12 +111,13 @@ function configureBrowserBridge() {
     addedAt: new Date().toISOString(),
     id: E2E_COMMUNITY_ID,
     name: relayUrl ? "Local Buzz" : "E2E Test",
+    pubkey: relayIdentity?.pubkey ?? E2E_DEFAULT_PUBKEY,
     relayUrl: relayUrl?.href.replace(/\/$/, "") ?? "ws://localhost:3000",
   };
   window.localStorage.setItem("buzz-communities", JSON.stringify([community]));
   window.localStorage.setItem("buzz-active-community-id", E2E_COMMUNITY_ID);
   window.localStorage.setItem(
-    `${ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX}${relayUrl ? LOCAL_RELAY_PREVIEW_PUBKEY : E2E_DEFAULT_PUBKEY}`,
+    `${ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX}${relayIdentity?.pubkey ?? E2E_DEFAULT_PUBKEY}`,
     "true",
   );
 }
@@ -168,7 +173,7 @@ async function installE2eBridgeIfConfigured() {
 
 async function bootstrap() {
   resetDevWebviewStateFromUrl();
-  configureBrowserBridge();
+  await configureBrowserBridge();
   recoverLocalStorageQuotaOnStartup();
   initializeConversationDensityPreference();
   initializeFontSizePreference();

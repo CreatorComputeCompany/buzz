@@ -49,9 +49,15 @@ VITE_BUZZ_RELAY_URL=ws://localhost:3030 pnpm -C desktop build:web-relay-preview
 pnpm -C desktop preview:web
 ```
 
+Open the default Tyler profile at `http://localhost:4173/`. To prove two
+independent browser identities, open a second isolated browser profile at
+`http://localhost:4173/?previewUser=alice`. Both profiles use the same relay,
+channels, and persisted event history.
+
 This mode uses the relay-backed browser transport already exercised by Buzz's
-integration suite. It is deliberately restricted to loopback relays because it
-currently uses the deterministic local test identity. It must not be deployed.
+integration suite. It is deliberately restricted to loopback relays because
+Tyler and Alice are deterministic local test identities whose keys are present
+in the preview bundle. It must not be deployed.
 The hosted build remains blocked on the server-backed web identity and auth
 adapter; no private key is embedded into a public asset.
 
