@@ -40,6 +40,21 @@ test-owned boundaries:
 The relay protocol, application stores, routes, components, styling, and
 interaction behaviour remain Buzz-owned and shared with desktop.
 
+## Real relay preview
+
+The exact frontend can also run against a real local `buzz-relay`:
+
+```bash
+VITE_BUZZ_RELAY_URL=ws://localhost:3030 pnpm -C desktop build:web-relay-preview
+pnpm -C desktop preview:web
+```
+
+This mode uses the relay-backed browser transport already exercised by Buzz's
+integration suite. It is deliberately restricted to loopback relays because it
+currently uses the deterministic local test identity. It must not be deployed.
+The hosted build remains blocked on the server-backed web identity and auth
+adapter; no private key is embedded into a public asset.
+
 ## Guardrails
 
 - Do not copy Buzz components into another frontend.

@@ -28,10 +28,33 @@ type E2eWindow = Window & {
 };
 
 const E2E_DEFAULT_PUBKEY = "deadbeef".repeat(8);
+const LOCAL_RELAY_PREVIEW_PUBKEY =
+  "e5ebc6cdb579be112e336cc319b5989b4bb6af11786ea90dbe52b5f08d741b34";
 const E2E_COMMUNITY_ID = "e2e-default-community";
 const ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX = "buzz-onboarding-complete.v1:";
 const DEV_STATE_RESET_PARAM = "resetDevState";
 const WEB_PREVIEW_MODE = "web-preview";
+const WEB_RELAY_PREVIEW_MODE = "web-relay-preview";
+
+function requireLoopbackRelayUrl(value: string | undefined): URL {
+  if (!value) {
+    throw new Error(
+      "VITE_BUZZ_RELAY_URL is required for the web relay preview build.",
+    );
+  }
+
+  const relayUrl = new URL(value);
+  if (
+    relayUrl.protocol !== "ws:" ||
+    (relayUrl.hostname !== "localhost" && relayUrl.hostname !== "127.0.0.1")
+  ) {
+    throw new Error(
+      "The web relay preview accepts only a local ws:// relay. Hosted identity and auth are not implemented yet.",
+    );
+  }
+
+  return relayUrl;
+}
 
 function resetDevWebviewStateFromUrl() {
   if (!import.meta.env.DEV) {
@@ -54,28 +77,42 @@ function resetDevWebviewStateFromUrl() {
 
 function configureBrowserBridge() {
   const isWebPreview = import.meta.env.MODE === WEB_PREVIEW_MODE;
-  if (!import.meta.env.DEV && !isWebPreview) {
+  const isWebRelayPreview = import.meta.env.MODE === WEB_RELAY_PREVIEW_MODE;
+  if (!import.meta.env.DEV && !isWebPreview && !isWebRelayPreview) {
     return;
   }
 
   const url = new URL(window.location.href);
-  if (!isWebPreview && url.searchParams.get("e2e") !== "mock") {
+  if (
+    !isWebPreview &&
+    !isWebRelayPreview &&
+    url.searchParams.get("e2e") !== "mock"
+  ) {
     return;
   }
 
   const e2eWindow = window as E2eWindow;
-  e2eWindow.__BUZZ_E2E__ ??= { mode: "mock" };
+  const relayUrl = isWebRelayPreview
+    ? requireLoopbackRelayUrl(import.meta.env.VITE_BUZZ_RELAY_URL)
+    : null;
+  e2eWindow.__BUZZ_E2E__ ??= relayUrl
+    ? {
+        mode: "relay",
+        relayHttpUrl: relayUrl.href.replace(/^ws:/, "http:").replace(/\/$/, ""),
+        relayWsUrl: relayUrl.href.replace(/\/$/, ""),
+      }
+    : { mode: "mock" };
 
   const community = {
     addedAt: new Date().toISOString(),
     id: E2E_COMMUNITY_ID,
-    name: "E2E Test",
-    relayUrl: "ws://localhost:3000",
+    name: relayUrl ? "Local Buzz" : "E2E Test",
+    relayUrl: relayUrl?.href.replace(/\/$/, "") ?? "ws://localhost:3000",
   };
   window.localStorage.setItem("buzz-communities", JSON.stringify([community]));
   window.localStorage.setItem("buzz-active-community-id", E2E_COMMUNITY_ID);
   window.localStorage.setItem(
-    `${ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX}${E2E_DEFAULT_PUBKEY}`,
+    `${ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX}${relayUrl ? LOCAL_RELAY_PREVIEW_PUBKEY : E2E_DEFAULT_PUBKEY}`,
     "true",
   );
 }
@@ -117,7 +154,8 @@ async function installE2eBridgeIfConfigured() {
     !(
       import.meta.env.DEV ||
       import.meta.env.MODE === "e2e" ||
-      import.meta.env.MODE === WEB_PREVIEW_MODE
+      import.meta.env.MODE === WEB_PREVIEW_MODE ||
+      import.meta.env.MODE === WEB_RELAY_PREVIEW_MODE
     ) ||
     !(window as E2eWindow).__BUZZ_E2E__
   ) {
