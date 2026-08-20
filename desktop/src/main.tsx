@@ -31,6 +31,7 @@ const E2E_DEFAULT_PUBKEY = "deadbeef".repeat(8);
 const E2E_COMMUNITY_ID = "e2e-default-community";
 const ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX = "buzz-onboarding-complete.v1:";
 const DEV_STATE_RESET_PARAM = "resetDevState";
+const WEB_PREVIEW_MODE = "web-preview";
 
 function resetDevWebviewStateFromUrl() {
   if (!import.meta.env.DEV) {
@@ -51,13 +52,14 @@ function resetDevWebviewStateFromUrl() {
   window.history.replaceState(window.history.state, "", url);
 }
 
-function configureDevE2eBridgeFromUrl() {
-  if (!import.meta.env.DEV) {
+function configureBrowserBridge() {
+  const isWebPreview = import.meta.env.MODE === WEB_PREVIEW_MODE;
+  if (!import.meta.env.DEV && !isWebPreview) {
     return;
   }
 
   const url = new URL(window.location.href);
-  if (url.searchParams.get("e2e") !== "mock") {
+  if (!isWebPreview && url.searchParams.get("e2e") !== "mock") {
     return;
   }
 
@@ -112,7 +114,11 @@ async function installE2eBridgeIfConfigured() {
   // The mock bridge is compiled only into dev and explicit E2E builds. A
   // pre-bootstrap global alone must never activate mock IPC in production.
   if (
-    !(import.meta.env.DEV || import.meta.env.MODE === "e2e") ||
+    !(
+      import.meta.env.DEV ||
+      import.meta.env.MODE === "e2e" ||
+      import.meta.env.MODE === WEB_PREVIEW_MODE
+    ) ||
     !(window as E2eWindow).__BUZZ_E2E__
   ) {
     return;
@@ -124,7 +130,7 @@ async function installE2eBridgeIfConfigured() {
 
 async function bootstrap() {
   resetDevWebviewStateFromUrl();
-  configureDevE2eBridgeFromUrl();
+  configureBrowserBridge();
   recoverLocalStorageQuotaOnStartup();
   initializeConversationDensityPreference();
   initializeFontSizePreference();
