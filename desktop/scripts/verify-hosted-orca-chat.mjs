@@ -80,19 +80,19 @@ async function waitForAgentReply(page, expected) {
     .waitFor({ timeout: 30_000 });
 }
 
-async function waitForRemoteTerminalMarker() {
-  const deadline = Date.now() + 30_000;
+async function remoteTerminalMarkerPresent(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const { stdout } = await exec("ssh", [
         orcaHost,
         `cat ${terminalMarkerPath}`,
       ]);
-      if (stdout.trim() === terminalMarker) return;
+      if (stdout.trim() === terminalMarker) return true;
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error("Native Orca terminal did not execute typed input");
+  return false;
 }
 
 const browser = await chromium.launch({ headless: true });
@@ -244,19 +244,30 @@ try {
     );
 
     // Real keyboard input: focus the terminal and type. No synthetic bridge
-    // events — this proves keystrokes reach the remote PTY.
-    const terminalInput = embed
-      .locator(".xterm-helper-textarea:visible")
-      .last();
-    await terminalInput.click({ force: true });
-    await page.waitForFunction(() =>
-      document.activeElement?.classList.contains("xterm-helper-textarea"),
-    );
-    await terminalInput.pressSequentially(
-      `printf '${terminalMarker}\\n' | tee ${terminalMarkerPath}`,
-    );
-    await page.keyboard.press("Enter");
-    await waitForRemoteTerminalMarker();
+    // events — this proves keystrokes reach the remote PTY. The shell in the
+    // new tab may still be spawning, so retry the whole line once.
+    let markerSeen = false;
+    for (let attempt = 0; attempt < 3 && !markerSeen; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      const terminalInput = embed
+        .locator(".xterm-helper-textarea:visible")
+        .last();
+      await terminalInput.click({ force: true });
+      await page.waitForFunction(() =>
+        document.activeElement?.classList.contains("xterm-helper-textarea"),
+      );
+      await page.keyboard.press("Control+C");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await terminalInput.pressSequentially(
+        `printf '${terminalMarker}\\n' | tee ${terminalMarkerPath}`,
+        { delay: 25 },
+      );
+      await page.keyboard.press("Enter");
+      markerSeen = await remoteTerminalMarkerPresent(20_000);
+    }
+    if (!markerSeen) {
+      throw new Error("Native Orca terminal did not execute typed input");
+    }
     await page.screenshot({
       path: "/tmp/buzz-web-orca-native-session-proof.png",
       fullPage: true,

@@ -42,7 +42,18 @@ export function parseOrcaPairingInput(input: string): OrcaPairingOffer | null {
   }
 }
 
-export async function fetchManagedOrcaPairing(): Promise<OrcaPairingOffer> {
+export type OrcaMemberAuth = {
+  pairingUrl: string;
+  email: string;
+  member: { key: string; displayName: string };
+};
+
+export type OrcaRuntimeAccess = {
+  offer: OrcaPairingOffer;
+  auth: OrcaMemberAuth | null;
+};
+
+export async function fetchManagedOrcaPairing(): Promise<OrcaRuntimeAccess> {
   const response = await fetch("/api/buzz/orca-runtime", {
     credentials: "include",
     headers: { Accept: "application/json" },
@@ -54,13 +65,26 @@ export async function fetchManagedOrcaPairing(): Promise<OrcaPairingOffer> {
         : "Could not connect to the Orca runtime.",
     );
   }
-  const payload = (await response.json()) as { pairingUrl?: unknown };
-  const pairing =
+  const payload = (await response.json()) as {
+    pairingUrl?: unknown;
+    orcaAuth?: unknown;
+  };
+  const offer =
     typeof payload.pairingUrl === "string"
       ? parseOrcaPairingInput(payload.pairingUrl)
       : null;
-  if (!pairing) throw new Error("The Orca runtime returned invalid access.");
-  return pairing;
+  if (!offer) throw new Error("The Orca runtime returned invalid access.");
+  return { offer, auth: parseOrcaMemberAuth(payload.orcaAuth) };
+}
+
+function parseOrcaMemberAuth(value: unknown): OrcaMemberAuth | null {
+  const auth = value as Partial<OrcaMemberAuth> | null;
+  return typeof auth?.pairingUrl === "string" &&
+    typeof auth.email === "string" &&
+    typeof auth.member?.key === "string" &&
+    typeof auth.member.displayName === "string"
+    ? (auth as OrcaMemberAuth)
+    : null;
 }
 
 function extractPairingCode(input: string): string | null {

@@ -20,6 +20,59 @@ function orcaRuntimeAllowedUserIds(): Set<string> {
   );
 }
 
+type OrcaAuthResult = {
+  pairingUrl: string;
+  email: string;
+  member: { key: string; displayName: string };
+};
+
+let cachedOrcaAuth: { result: OrcaAuthResult; expiresAt: number } | null = null;
+
+function orcaRuntimeHttpBase(pairingUrl: string): string | null {
+  try {
+    const code = new URL(pairingUrl).searchParams.get("code");
+    if (!code) return null;
+    const offer = JSON.parse(
+      Buffer.from(code, "base64url").toString("utf8"),
+    ) as { endpoint?: string };
+    if (!offer.endpoint) return null;
+    const endpoint = new URL(offer.endpoint);
+    endpoint.protocol = endpoint.protocol === "wss:" ? "https:" : "http:";
+    return `${endpoint.origin}${endpoint.pathname.replace(/\/$/, "")}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sign into the Orca runtime as the shared member so the embedded web client
+ * never shows Orca's own account screens. The login is cached because the
+ * runtime rate-limits its login endpoint.
+ */
+async function mintOrcaAuth(pairingUrl: string): Promise<OrcaAuthResult | null> {
+  const email = process.env.BUZZ_ORCA_MEMBER_EMAIL;
+  const password = process.env.BUZZ_ORCA_MEMBER_PASSWORD;
+  if (!email || !password) return null;
+  if (cachedOrcaAuth && cachedOrcaAuth.expiresAt > Date.now()) {
+    return cachedOrcaAuth.result;
+  }
+  const base = orcaRuntimeHttpBase(pairingUrl);
+  if (!base) return null;
+  try {
+    const response = await fetch(`${base}/api/multiplayer/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!response.ok) return null;
+    const result = (await response.json()) as OrcaAuthResult;
+    cachedOrcaAuth = { result, expiresAt: Date.now() + 10 * 60 * 1000 };
+    return result;
+  } catch {
+    return null;
+  }
+}
+
 function requestUrl(request: IncomingMessage): string {
   const host = request.headers["x-forwarded-host"] ?? request.headers.host;
   const protocol = request.headers["x-forwarded-proto"] ?? "https";
@@ -87,8 +140,9 @@ async function route(request: Request): Promise<Response> {
         { status: 503 },
       );
     }
+    const orcaAuth = await mintOrcaAuth(pairingUrl);
     return Response.json(
-      { pairingUrl },
+      { pairingUrl, ...(orcaAuth ? { orcaAuth } : {}) },
       { headers: { "Cache-Control": "no-store, private" } },
     );
   }

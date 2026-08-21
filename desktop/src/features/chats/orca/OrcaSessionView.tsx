@@ -2,7 +2,11 @@ import * as React from "react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import type { OrcaChatConfig } from "../chatChannel";
 import { Button } from "@/shared/ui/button";
-import { fetchManagedOrcaPairing, type OrcaPairingOffer } from "./pairing";
+import {
+  fetchManagedOrcaPairing,
+  type OrcaMemberAuth,
+  type OrcaPairingOffer,
+} from "./pairing";
 import { OrcaRuntimeClient } from "./runtimeClient";
 import { findChatWorktrees, type OrcaWorktree } from "./sessionDiscovery";
 import { attachOrcaWebApp, detachOrcaWebApp } from "./sessionHost";
@@ -19,6 +23,9 @@ export function OrcaSessionView({
   const [pairing, setPairing] = React.useState<OrcaPairingOffer | null>(() =>
     readStoredPairing(),
   );
+  const [memberAuth, setMemberAuth] = React.useState<OrcaMemberAuth | null>(
+    null,
+  );
   const [worktree, setWorktree] = React.useState<OrcaWorktree | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [mounted, setMounted] = React.useState(false);
@@ -28,10 +35,11 @@ export function OrcaSessionView({
     if (pairing) return;
     let cancelled = false;
     void fetchManagedOrcaPairing()
-      .then((nextPairing) => {
+      .then((access) => {
         if (cancelled) return;
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextPairing));
-        setPairing(nextPairing);
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(access.offer));
+        setPairing(access.offer);
+        setMemberAuth(access.auth);
         setError(null);
       })
       .catch((cause) => {
@@ -81,7 +89,7 @@ export function OrcaSessionView({
     // Orca Web's real renderer mounts here, in the light DOM. Only its auth
     // bootstrap is replaced: the Buzz runtime ticket in `pairing` rides in as
     // the pairing code.
-    void attachOrcaWebApp(host, pairing, worktree?.id ?? null)
+    void attachOrcaWebApp(host, pairing, worktree?.id ?? null, memberAuth)
       .then(() => {
         if (cancelled) return;
         setMounted(true);

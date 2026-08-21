@@ -1,8 +1,9 @@
-import type { OrcaPairingOffer } from "./pairing";
+import type { OrcaMemberAuth, OrcaPairingOffer } from "./pairing";
 
 export type OrcaWebEmbedHandle = {
   container: HTMLElement;
   pairingCode: string;
+  authResult?: OrcaMemberAuth;
   controller?: { focusWorktree: (worktreeId: string) => void };
 };
 
@@ -70,8 +71,9 @@ export async function attachOrcaWebApp(
   pane: HTMLElement,
   offer: OrcaPairingOffer,
   worktreeId: string | null,
+  memberAuth: OrcaMemberAuth | null = null,
 ): Promise<OrcaWebEmbedHandle> {
-  bootPromise ??= bootOrcaWebApp(offer).catch((cause) => {
+  bootPromise ??= bootOrcaWebApp(offer, memberAuth).catch((cause) => {
     bootPromise = null;
     throw cause;
   });
@@ -92,6 +94,7 @@ export function detachOrcaWebApp(pane: HTMLElement): void {
 
 async function bootOrcaWebApp(
   offer: OrcaPairingOffer,
+  memberAuth: OrcaMemberAuth | null,
 ): Promise<OrcaWebEmbedHandle> {
   const indexUrl = new URL("web-index.html", orcaHttpBaseUrl(offer.endpoint));
   const indexResponse = await fetch(indexUrl, { cache: "no-store" });
@@ -126,6 +129,7 @@ async function bootOrcaWebApp(
   const handle: OrcaWebEmbedHandle = {
     container,
     pairingCode: encodeOrcaPairingCode(offer),
+    ...(memberAuth ? { authResult: memberAuth } : {}),
   };
   (
     window as Window & { __ORCA_WEB_EMBED__?: OrcaWebEmbedHandle }
