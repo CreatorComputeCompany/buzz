@@ -100,6 +100,7 @@ struct SessionRuntimeConfig {
     model: Option<String>,
     provider: Option<String>,
     repository_selector: Option<String>,
+    owner_member_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

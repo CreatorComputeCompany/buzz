@@ -7,11 +7,7 @@ import {
   type OrcaMemberAuth,
   type OrcaPairingOffer,
 } from "./pairing";
-import { OrcaRuntimeClient } from "./runtimeClient";
-import { findChatWorktrees, type OrcaWorktree } from "./sessionDiscovery";
 import { attachOrcaWebApp, detachOrcaWebApp } from "./sessionHost";
-
-const STORAGE_KEY = "buzz.orca.runtime-pairing.v1";
 
 export function OrcaSessionView({
   channelId,
@@ -20,13 +16,11 @@ export function OrcaSessionView({
   config: OrcaChatConfig;
 }) {
   const hostRef = React.useRef<HTMLDivElement>(null);
-  const [pairing, setPairing] = React.useState<OrcaPairingOffer | null>(() =>
-    readStoredPairing(),
-  );
+  const [pairing, setPairing] = React.useState<OrcaPairingOffer | null>(null);
   const [memberAuth, setMemberAuth] = React.useState<OrcaMemberAuth | null>(
     null,
   );
-  const [worktree, setWorktree] = React.useState<OrcaWorktree | null>(null);
+  const [worktreeId, setWorktreeId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [mounted, setMounted] = React.useState(false);
   const [attempt, setAttempt] = React.useState(0);
@@ -34,12 +28,12 @@ export function OrcaSessionView({
   React.useEffect(() => {
     if (pairing) return;
     let cancelled = false;
-    void fetchManagedOrcaPairing()
+    void fetchManagedOrcaPairing(channelId)
       .then((access) => {
         if (cancelled) return;
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(access.offer));
         setPairing(access.offer);
         setMemberAuth(access.auth);
+        setWorktreeId(access.worktreeId);
         setError(null);
       })
       .catch((cause) => {
@@ -48,48 +42,16 @@ export function OrcaSessionView({
     return () => {
       cancelled = true;
     };
-  }, [pairing, attempt]);
-
-  React.useEffect(() => {
-    if (!pairing) return;
-    const client = new OrcaRuntimeClient(pairing);
-    let cancelled = false;
-
-    const discover = async () => {
-      try {
-        const listed = await client.call<{ worktrees: OrcaWorktree[] }>(
-          "worktree.list",
-          { limit: 500 },
-        );
-        if (cancelled) return;
-        const discovered =
-          findChatWorktrees(listed.worktrees ?? [], channelId)[0] ?? null;
-        setWorktree((current) =>
-          current?.id === discovered?.id ? current : discovered,
-        );
-        setError(null);
-      } catch (cause) {
-        if (!cancelled) setError(errorMessage(cause));
-      }
-    };
-
-    void discover();
-    const interval = window.setInterval(() => void discover(), 5_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-      client.close();
-    };
   }, [channelId, pairing, attempt]);
 
   React.useEffect(() => {
     const host = hostRef.current;
-    if (!host || !pairing) return;
+    if (!host || !pairing || !worktreeId) return;
     let cancelled = false;
     // Orca Web's real renderer mounts here, in the light DOM. Only its auth
     // bootstrap is replaced: the Buzz runtime ticket in `pairing` rides in as
     // the pairing code.
-    void attachOrcaWebApp(host, pairing, worktree?.id ?? null, memberAuth)
+    void attachOrcaWebApp(host, pairing, worktreeId, memberAuth)
       .then(() => {
         if (cancelled) return;
         setMounted(true);
@@ -102,14 +64,13 @@ export function OrcaSessionView({
       cancelled = true;
       detachOrcaWebApp(host);
     };
-  }, [pairing, worktree?.id, attempt]);
+  }, [pairing, worktreeId, memberAuth, attempt]);
 
   const retry = () => {
     setPairing(null);
-    setWorktree(null);
+    setWorktreeId(null);
     setError(null);
     setMounted(false);
-    window.localStorage.removeItem(STORAGE_KEY);
     setAttempt((current) => current + 1);
   };
 
@@ -145,16 +106,6 @@ export function OrcaSessionView({
       ) : null}
     </div>
   );
-}
-
-function readStoredPairing(): OrcaPairingOffer | null {
-  try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (!stored) return null;
-    return JSON.parse(stored) as OrcaPairingOffer;
-  } catch {
-    return null;
-  }
 }
 
 function errorMessage(cause: unknown): string {

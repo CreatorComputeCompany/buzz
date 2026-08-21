@@ -1974,6 +1974,15 @@ pub async fn run_prompt_task(
             title_channel = resolved_channel;
             origin_channel_type = resolved_channel_type;
             runtime_config = resolved_runtime_config;
+            if let Some(author) = batch
+                .as_ref()
+                .and_then(|queued| queued.events.first())
+                .map(|event| event.event.pubkey.to_hex())
+            {
+                let config = runtime_config.get_or_insert_with(|| serde_json::json!({}));
+                config["ownerMemberKey"] =
+                    serde_json::Value::String(format!("buzz-{}", &author[..author.len().min(48)]));
+            }
             if let Some(owner) = ctx.agent_owner_pubkey.as_ref() {
                 huddle_instructions =
                     fetch_huddle_instructions(*cid, owner, &ctx.rest_client).await;

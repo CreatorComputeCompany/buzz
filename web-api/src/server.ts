@@ -20,14 +20,6 @@ function orcaRuntimeAllowedUserIds(): Set<string> {
   );
 }
 
-type OrcaAuthResult = {
-  pairingUrl: string;
-  email: string;
-  member: { key: string; displayName: string };
-};
-
-let cachedOrcaAuth: { result: OrcaAuthResult; expiresAt: number } | null = null;
-
 function orcaRuntimeHttpBase(pairingUrl: string): string | null {
   try {
     const code = new URL(pairingUrl).searchParams.get("code");
@@ -44,30 +36,37 @@ function orcaRuntimeHttpBase(pairingUrl: string): string | null {
   }
 }
 
-/**
- * Sign into the Orca runtime as the shared member so the embedded web client
- * never shows Orca's own account screens. The login is cached because the
- * runtime rate-limits its login endpoint.
- */
-async function mintOrcaAuth(pairingUrl: string): Promise<OrcaAuthResult | null> {
-  const email = process.env.BUZZ_ORCA_MEMBER_EMAIL;
-  const password = process.env.BUZZ_ORCA_MEMBER_PASSWORD;
-  if (!email || !password) return null;
-  if (cachedOrcaAuth && cachedOrcaAuth.expiresAt > Date.now()) {
-    return cachedOrcaAuth.result;
-  }
+async function mintOrcaTicket(
+  pairingUrl: string,
+  identity: { pubkey: string },
+  user: { email: string; name: string },
+  channelId: string,
+): Promise<{ pairingUrl: string; worktreeId?: string } | null> {
+  const secret = process.env.BUZZ_ORCA_APP_TICKET_SECRET;
+  const issuer = process.env.BUZZ_ORCA_IDENTITY_ISSUER ?? "https://buzz.chat";
+  if (!secret) return null;
   const base = orcaRuntimeHttpBase(pairingUrl);
   if (!base) return null;
   try {
-    const response = await fetch(`${base}/api/multiplayer/login`, {
+    const response = await fetch(`${base}/api/runtime/app-ticket`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        subject: identity.pubkey,
+        name: user.name,
+        email: user.email,
+        issuer,
+        channelId,
+      }),
     });
     if (!response.ok) return null;
-    const result = (await response.json()) as OrcaAuthResult;
-    cachedOrcaAuth = { result, expiresAt: Date.now() + 10 * 60 * 1000 };
-    return result;
+    return (await response.json()) as {
+      pairingUrl: string;
+      worktreeId?: string;
+    };
   } catch {
     return null;
   }
@@ -134,15 +133,31 @@ async function route(request: Request): Promise<Response> {
       return Response.json({ error: "orca_access_denied" }, { status: 403 });
     }
     const pairingUrl = process.env.BUZZ_ORCA_PAIRING_URL;
+    const channelId = url.searchParams.get("channelId");
+    if (!channelId || !/^[0-9a-f-]{36}$/i.test(channelId)) {
+      return Response.json({ error: "invalid_channel" }, { status: 400 });
+    }
     if (!pairingUrl) {
       return Response.json(
         { error: "orca_runtime_unavailable" },
         { status: 503 },
       );
     }
-    const orcaAuth = await mintOrcaAuth(pairingUrl);
+    const identity = await ensureIdentity(session.user.id);
+    const ticket = await mintOrcaTicket(
+      pairingUrl,
+      identity,
+      session.user,
+      channelId,
+    );
+    if (!ticket) {
+      return Response.json(
+        { error: "orca_worktree_access_denied" },
+        { status: 403 },
+      );
+    }
     return Response.json(
-      { pairingUrl, ...(orcaAuth ? { orcaAuth } : {}) },
+      { pairingUrl: ticket.pairingUrl, worktreeId: ticket.worktreeId },
       { headers: { "Cache-Control": "no-store, private" } },
     );
   }

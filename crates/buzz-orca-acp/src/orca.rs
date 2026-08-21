@@ -74,6 +74,10 @@ fn create_command_args(
         args.push("--model".into());
         args.push(model.to_owned());
     }
+    if let Some(owner_member_key) = runtime.owner_member_key.as_deref() {
+        args.push("--owner-member-key".into());
+        args.push(owner_member_key.to_owned());
+    }
     args.push("--json".into());
     args
 }
@@ -362,6 +366,7 @@ mod tests {
                 repository_selector: Some("id:selected-repo".into()),
                 provider: Some("codex".into()),
                 model: Some("gpt-5.2-codex".into()),
+                owner_member_key: None,
             },
         );
         assert_eq!(
@@ -400,6 +405,7 @@ mod tests {
                 repository_selector: Some("id:selected-repo".into()),
                 provider: Some("codex".into()),
                 model: None,
+                owner_member_key: None,
             },
         );
 
@@ -407,6 +413,23 @@ mod tests {
             .windows(2)
             .any(|pair| pair == ["--base-branch", "main"]));
         assert!(!args.contains(&"feat/default-repo".to_owned()));
+    }
+
+    #[test]
+    fn assigns_the_buzz_member_as_worktree_owner() {
+        let args = create_command_args(
+            &config(),
+            "chat-one",
+            "fix it",
+            &SessionRuntimeConfig {
+                owner_member_key: Some("buzz-abc123".into()),
+                ..SessionRuntimeConfig::default()
+            },
+        );
+
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--owner-member-key", "buzz-abc123"]));
     }
 
     #[test]

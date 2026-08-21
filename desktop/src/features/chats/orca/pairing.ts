@@ -51,13 +51,19 @@ export type OrcaMemberAuth = {
 export type OrcaRuntimeAccess = {
   offer: OrcaPairingOffer;
   auth: OrcaMemberAuth | null;
+  worktreeId: string;
 };
 
-export async function fetchManagedOrcaPairing(): Promise<OrcaRuntimeAccess> {
-  const response = await fetch("/api/buzz/orca-runtime", {
-    credentials: "include",
-    headers: { Accept: "application/json" },
-  });
+export async function fetchManagedOrcaPairing(
+  channelId: string,
+): Promise<OrcaRuntimeAccess> {
+  const response = await fetch(
+    `/api/buzz/orca-runtime?channelId=${encodeURIComponent(channelId)}`,
+    {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    },
+  );
   if (!response.ok) {
     throw new Error(
       response.status === 403
@@ -68,13 +74,21 @@ export async function fetchManagedOrcaPairing(): Promise<OrcaRuntimeAccess> {
   const payload = (await response.json()) as {
     pairingUrl?: unknown;
     orcaAuth?: unknown;
+    worktreeId?: unknown;
   };
   const offer =
     typeof payload.pairingUrl === "string"
       ? parseOrcaPairingInput(payload.pairingUrl)
       : null;
   if (!offer) throw new Error("The Orca runtime returned invalid access.");
-  return { offer, auth: parseOrcaMemberAuth(payload.orcaAuth) };
+  if (typeof payload.worktreeId !== "string" || !payload.worktreeId) {
+    throw new Error("The Orca runtime did not return the chat worktree.");
+  }
+  return {
+    offer,
+    auth: parseOrcaMemberAuth(payload.orcaAuth),
+    worktreeId: payload.worktreeId,
+  };
 }
 
 function parseOrcaMemberAuth(value: unknown): OrcaMemberAuth | null {
