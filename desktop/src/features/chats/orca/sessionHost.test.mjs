@@ -65,6 +65,19 @@ test("scopes document-level selectors onto the embed container", () => {
   );
 });
 
+test("rewrites viewport units to container-query units", () => {
+  const stylesheetUrl = new URL("https://orca.example.com/assets/app.css");
+  assert.equal(
+    scopeOrcaWebCss(
+      ".a{height:100dvh;min-height:50svh;max-height:25lvh;width:100vw}" +
+        ".b{height:calc(100vh - 48px)}.c{--x:10vh}.overhang{margin:1evh}",
+      stylesheetUrl,
+    ),
+    ".a{height:100cqh;min-height:50cqh;max-height:25cqh;width:100cqw}" +
+      ".b{height:calc(100cqh - 48px)}.c{--x:10cqh}.overhang{margin:1evh}",
+  );
+});
+
 test("absolutizes relative asset URLs against the stylesheet URL", () => {
   const stylesheetUrl = new URL("https://orca.example.com/assets/app.css");
   const scoped = scopeOrcaWebCss(

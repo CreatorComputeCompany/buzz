@@ -57,12 +57,21 @@ export function scopeOrcaWebCss(css: string, stylesheetUrl: URL): string {
     (_match, quote: string, assetPath: string) =>
       `url(${quote}${new URL(assetPath, stylesheetUrl).toString()}${quote})`,
   );
-  return withAbsoluteAssets
-    .replace(/:root\b/g, EMBED_SCOPE_SELECTOR)
-    .replace(/:host\b/g, EMBED_SCOPE_SELECTOR)
-    .replace(/\.dark\b/g, `${EMBED_SCOPE_SELECTOR}.dark`)
-    .replace(/(^|[{},\s>+~(])html\b/g, `$1${EMBED_SCOPE_SELECTOR}`)
-    .replace(/(^|[{},\s>+~(])body\b/g, `$1${EMBED_SCOPE_SELECTOR}`);
+  return (
+    withAbsoluteAssets
+      .replace(/:root\b/g, EMBED_SCOPE_SELECTOR)
+      .replace(/:host\b/g, EMBED_SCOPE_SELECTOR)
+      .replace(/\.dark\b/g, `${EMBED_SCOPE_SELECTOR}.dark`)
+      .replace(/(^|[{},\s>+~(])html\b/g, `$1${EMBED_SCOPE_SELECTOR}`)
+      .replace(/(^|[{},\s>+~(])body\b/g, `$1${EMBED_SCOPE_SELECTOR}`)
+      // Why: Orca sizes full-screen surfaces in viewport units. Inside the
+      // session pane the "viewport" is the embed container, so viewport units
+      // become container-query units against it (see installEmbedOverrideStyles).
+      .replace(/(\d)dvh\b/g, "$1cqh")
+      .replace(/(\d)[sl]?vh\b/g, "$1cqh")
+      .replace(/(\d)dvw\b/g, "$1cqw")
+      .replace(/(\d)[sl]?vw\b/g, "$1cqw")
+  );
 }
 
 let bootPromise: Promise<OrcaWebEmbedHandle> | null = null;
@@ -146,8 +155,11 @@ function installEmbedOverrideStyles(): void {
   style.setAttribute("data-orca-web-embed-overrides", "");
   // Why: Orca's standalone shell sizes itself to the viewport; inside Buzz it
   // must fill the session pane instead.
+  // Why the !important geometry: the scoped Orca stylesheet rewrites `html`/
+  // `body` sizing rules onto this container; the pane, not those rules, must
+  // decide its size.
   style.textContent = [
-    `${EMBED_SCOPE_SELECTOR}{position:absolute;inset:0;overflow:hidden;background:var(--background)}`,
+    `${EMBED_SCOPE_SELECTOR}{position:absolute!important;inset:0!important;height:auto!important;width:auto!important;min-height:0!important;min-width:0!important;max-height:none!important;max-width:none!important;margin:0!important;overflow:hidden;background:var(--background);container-type:size}`,
     `${EMBED_SCOPE_SELECTOR} .app-layout{height:100%;width:100%}`,
   ].join("\n");
   document.head.appendChild(style);
