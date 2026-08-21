@@ -1,0 +1,32 @@
+app = "imabird-buzz-test-agent"
+primary_region = "lhr"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "test-agent.Dockerfile"
+
+[env]
+  AGENT_CWD = "/home/node"
+  BUZZ_ACP_AGENT_ARGS = "acp"
+  BUZZ_ACP_AGENT_COMMAND = "/usr/local/bin/buzz-agent"
+  BUZZ_ACP_MCP_COMMAND = "/usr/local/bin/buzz-dev-mcp"
+  BUZZ_ACP_NO_MEMORY = "true"
+  BUZZ_ACP_RESPOND_TO = "anyone"
+  BUZZ_AGENT_MAX_CONTEXT_TOKENS = "128000"
+  BUZZ_AGENT_MAX_OUTPUT_TOKENS = "2048"
+  BUZZ_AGENT_PROVIDER = "openai"
+  BUZZ_AGENT_REQUIRE_REPLY = "1"
+  BUZZ_E2E_CLI_BIN = "/usr/local/bin/buzz"
+  BUZZ_RELAY_URL = "wss://imabird-buzz-relay.fly.dev"
+  OPENAI_COMPAT_BASE_URL = "https://api.openai.com/v1"
+  OPENAI_COMPAT_MODEL = "gpt-5-mini"
+  RUST_LOG = "buzz_acp=info"
+
+[[restart]]
+  policy = "always"
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

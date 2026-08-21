@@ -30,6 +30,13 @@ export async function uploadMediaFile(
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (signal?.aborted) throw new Error("upload cancelled");
   onDispatch?.();
+  if (import.meta.env.MODE === "web-client") {
+    return invokeTauri<BlobDescriptor>("upload_media_bytes", {
+      data: Array.from(bytes),
+      filename: file.name,
+      progressId,
+    });
+  }
   return invokeTauriRaw<BlobDescriptor>("upload_media_bytes_raw", bytes, {
     headers,
   });

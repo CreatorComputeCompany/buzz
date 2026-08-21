@@ -28,18 +28,51 @@ Run the production acceptance check with:
 
 ```bash
 pnpm -C desktop verify:web-hosted
+pnpm -C desktop verify:web-agent-hosted
+pnpm -C desktop verify:web-agent-persistent
+pnpm -C desktop verify:web-orca-chat
 ```
 
-The check creates two ordinary accounts through the visible sign-up UI, creates
-and joins one shared channel through Buzz's channel browser, exchanges a message
-in each direction, and verifies realtime delivery in both browser contexts.
+The check creates ordinary accounts through the visible sign-up UI and proves
+channel creation and joining, channel and direct messages in both directions,
+two-way threads, reactions, presence transitions, refresh persistence,
+authenticated attachment upload and byte-identical download, offline catch-up
+without duplicates, Enter-to-send, and a 390x844 mobile-browser send received
+by a desktop-sized peer. A separate native acceptance run joins the same hosted
+channel from the Buzz desktop binary and exchanges live messages with Buzz Web.
+
+The hosted agent check provisions a disposable NIP-OA bot, runs the real
+`buzz-acp` harness, selects the bot through Buzz's visible mention autocomplete,
+and verifies its signed response in the visible thread UI. The durable
+server-owned turn path is defined in [HOSTED_AGENT_TURNS.md](HOSTED_AGENT_TURNS.md).
+The persistent check exercises the always-on `Buzz Test Agent` in the public
+`agent-playground` channel.
+
+## Disposable coding chats
+
+Buzz Web exposes a `Chats` section for isolated coding sessions. `New chat`
+selects an allowlisted repository, provider, and optional model, then creates a
+private Buzz conversation backed by one Orca worktree. Messages in that Chat are
+routed to `Buzz Orca Agent` automatically, so users do not need to mention the
+agent manually. Follow-up messages reuse the same Orca terminal; a different
+Chat receives a different worktree.
+
+Each Chat also has a native `Session` view. It connects directly to the hosted
+Orca runtime over its encrypted WebSocket protocol, discovers the Chat's
+worktree, exposes its terminal tabs and output, and sends terminal input without
+embedding Orca's web application. Users can create, switch, rename, and close
+terminals inside the same isolated worktree. Authorized Buzz accounts receive
+runtime access automatically from the authenticated web API; the capability is
+cached in browser-local storage and is never published to the relay or included
+in the frontend bundle.
 
 ## Existing production seam
 
 Buzz's E2E relay mode already runs the same React application against a real
 `buzz-relay` from Chromium. The relay-backed suite proves channel discovery,
 message sending, realtime delivery between browser contexts, DMs, threads,
-reactions, and reconnection without changing the UI.
+reactions, attachments, presence, responsive interaction, and reconnection
+without changing the UI.
 
 The production web client promotes that seam by replacing only these
 platform-owned boundaries:

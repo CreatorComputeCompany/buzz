@@ -1,8 +1,13 @@
 import type { Channel } from "@/shared/api/types";
+import { isOrcaChatChannel } from "@/features/chats/chatChannel";
 
 export function getChannelDescription(channel: Channel | null): string {
   if (!channel) {
     return "Connect to the relay to browse channels and read messages.";
+  }
+
+  if (isOrcaChatChannel(channel)) {
+    return "Private Orca worktree chat.";
   }
 
   const prefixes = [

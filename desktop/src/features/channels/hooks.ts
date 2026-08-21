@@ -676,7 +676,10 @@ export function useArchiveChannelMutation(channelId: string | null) {
       setChannelArchivedState(queryClient, channelId, new Date().toISOString());
     },
     onSettled: async () => {
-      await invalidateChannelState(queryClient, channelId);
+      await Promise.all([
+        invalidateChannelState(queryClient, channelId),
+        queryClient.invalidateQueries({ queryKey: ["relay-agents"] }),
+      ]);
     },
   });
 }
@@ -700,7 +703,10 @@ export function useUnarchiveChannelMutation(channelId: string | null) {
       setChannelArchivedState(queryClient, channelId, null);
     },
     onSettled: async () => {
-      await invalidateChannelState(queryClient, channelId);
+      await Promise.all([
+        invalidateChannelState(queryClient, channelId),
+        queryClient.invalidateQueries({ queryKey: ["relay-agents"] }),
+      ]);
     },
   });
 }

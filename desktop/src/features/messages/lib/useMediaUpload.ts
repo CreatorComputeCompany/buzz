@@ -621,7 +621,7 @@ export function useMediaUpload({
   const openFilePicker = useFilePicker();
 
   const handlePaperclip = React.useCallback(async () => {
-    if (queueUntilSend) {
+    if (queueUntilSend || import.meta.env.MODE === "web-client") {
       openFilePicker({ multiple: true }, (files) => {
         queueFiles(files.filter(shouldQueueFile));
         uploadFiles(files.filter((file) => !shouldQueueFile(file)));

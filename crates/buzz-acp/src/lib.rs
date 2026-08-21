@@ -2681,6 +2681,9 @@ async fn tokio_main() -> Result<()> {
                                             tracing::warn!("failed to subscribe to new channel {ch}: {e}");
                                         } else {
                                             subscribed_channel_ids.insert(ch);
+                                            if let Err(e) = relay.reconnect().await {
+                                                tracing::warn!("failed to refresh subscriptions after joining channel {ch}: {e}");
+                                            }
                                         }
                                     } else {
                                         tracing::debug!(channel_id = %ch, "membership notification: no matching rules — skipping");
@@ -2858,21 +2861,33 @@ async fn tokio_main() -> Result<()> {
                                 // exercised by non-owner authors inside DMs.
                                 let is_dm =
                                     is_dm_channel(buzz_event.channel_id, &ctx.channel_info).await;
-                                let allowed = author_allowed(
-                                    &config.respond_to,
-                                    &config.respond_to_allowlist,
-                                    &author,
-                                    is_dm,
-                                    &owner_cache,
-                                    &ctx.rest_client,
-                                )
-                                .await;
+                                let is_agent_chat = ctx
+                                    .channel_info
+                                    .resolve(buzz_event.channel_id)
+                                    .await
+                                    .as_ref()
+                                    .and_then(pool::agent_chat_runtime_config)
+                                    .is_some();
+                                let allowed = if is_agent_chat {
+                                    !matches!(config.respond_to, RespondTo::Nobody)
+                                } else {
+                                    author_allowed(
+                                        &config.respond_to,
+                                        &config.respond_to_allowlist,
+                                        &author,
+                                        is_dm,
+                                        &owner_cache,
+                                        &ctx.rest_client,
+                                    )
+                                    .await
+                                };
                                 if !allowed {
                                     tracing::debug!(
                                         channel_id = %buzz_event.channel_id,
                                         author = %buzz_event.event.pubkey.to_hex(),
                                         mode = %config.respond_to,
                                         is_dm,
+                                        is_agent_chat,
                                         "inbound author gate — dropping event"
                                     );
                                     continue;

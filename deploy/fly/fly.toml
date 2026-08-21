@@ -14,6 +14,7 @@ primary_region = "lhr"
   BUZZ_HUDDLE_AUDIO_AVAILABLE = "true"
   BUZZ_MEDIA_BASE_URL = "https://imabird-buzz-relay.fly.dev/media"
   BUZZ_METRICS_PORT = "9102"
+  BUZZ_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC = "100"
   BUZZ_REQUIRE_AUTH_TOKEN = "true"
   BUZZ_REQUIRE_RELAY_MEMBERSHIP = "true"
   BUZZ_S3_ADDRESSING_STYLE = "virtual"
@@ -52,4 +53,3 @@ primary_region = "lhr"
 [[vm]]
   size = "shared-cpu-1x"
   memory = "1gb"
-

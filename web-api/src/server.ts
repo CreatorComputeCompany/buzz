@@ -11,6 +11,15 @@ import {
 
 const port = Number(process.env.PORT ?? 3000);
 
+function orcaRuntimeAllowedUserIds(): Set<string> {
+  return new Set(
+    (process.env.BUZZ_ORCA_ALLOWED_USER_IDS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+}
+
 function requestUrl(request: IncomingMessage): string {
   const host = request.headers["x-forwarded-host"] ?? request.headers.host;
   const protocol = request.headers["x-forwarded-proto"] ?? "https";
@@ -65,6 +74,23 @@ async function route(request: Request): Promise<Response> {
         error instanceof Error ? error.message : "Unable to sign event";
       return Response.json({ error: message }, { status: 400 });
     }
+  }
+
+  if (url.pathname === "/api/buzz/orca-runtime" && request.method === "GET") {
+    if (!orcaRuntimeAllowedUserIds().has(session.user.id)) {
+      return Response.json({ error: "orca_access_denied" }, { status: 403 });
+    }
+    const pairingUrl = process.env.BUZZ_ORCA_PAIRING_URL;
+    if (!pairingUrl) {
+      return Response.json(
+        { error: "orca_runtime_unavailable" },
+        { status: 503 },
+      );
+    }
+    return Response.json(
+      { pairingUrl },
+      { headers: { "Cache-Control": "no-store, private" } },
+    );
   }
 
   return new Response("Not found", { status: 404 });

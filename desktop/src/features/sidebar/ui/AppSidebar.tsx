@@ -59,6 +59,12 @@ import {
 } from "@/features/sidebar/ui/sidebarLoadingSkeleton";
 import { useDeferredModalOpen } from "@/shared/ui/deferredModalOpen";
 import { SidebarUpdateCard } from "@/features/settings/SidebarUpdateCard";
+import { NewChatDialog } from "@/features/chats/NewChatDialog";
+import {
+  getOrcaChatLabel,
+  isOrcaChatChannel,
+  type OrcaChatConfig,
+} from "@/features/chats/chatChannel";
 import { useUpdaterContext } from "@/features/settings/hooks/UpdaterProvider";
 import { shouldShowSidebarUpdateCard } from "@/features/settings/sidebarUpdateCardVisibility";
 import type { SettingsSection } from "@/features/settings/ui/SettingsPanels";
@@ -124,6 +130,7 @@ type AppSidebarProps = {
     ttlSeconds?: number;
     templateId?: string;
   }) => Promise<void>;
+  onCreateChat: (config: OrcaChatConfig) => Promise<void>;
   onOpenAddCommunity: () => void;
   onSendFeedback?: () => void;
   onHideDm: (channelId: string) => void;
@@ -198,6 +205,7 @@ export function AppSidebar({
   onAddCommunityOpenChange,
   onCreateChannel,
   onCreateForum,
+  onCreateChat,
   onOpenAddCommunity,
   onSendFeedback,
   onHideDm,
@@ -247,6 +255,7 @@ export function AppSidebar({
   const showSidebarUpdateCard =
     canShowSidebarUpdateCard && !isSidebarUpdateCardDismissed;
   const [dmActionsMenuOpen, setDmActionsMenuOpen] = React.useState(false);
+  const [isNewChatOpen, setIsNewChatOpen] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   useSidebarScrollLock(scrollRef);
   // biome-ignore format: keep compact to stay within file size limit
@@ -321,6 +330,7 @@ export function AppSidebar({
     Record<CollapsibleSidebarGroup, boolean>
   >({
     starred: false,
+    chats: false,
     channels: false,
     forums: false,
     directMessages: false,
@@ -386,8 +396,27 @@ export function AppSidebar({
     });
 
   const streamChannels = React.useMemo(
-    () => channels.filter((channel) => channel.channelType === "stream"),
+    () =>
+      channels.filter(
+        (channel) =>
+          channel.channelType === "stream" && !isOrcaChatChannel(channel),
+      ),
     [channels],
+  );
+  const chatChannels = React.useMemo(
+    () =>
+      sortChannelsForSidebar(
+        channels.filter(isOrcaChatChannel),
+        sortModeFor("chats"),
+      ),
+    [channels, sortModeFor],
+  );
+  const chatLabels = React.useMemo(
+    () =>
+      Object.fromEntries(
+        chatChannels.map((channel) => [channel.id, getOrcaChatLabel(channel)]),
+      ),
+    [chatChannels],
   );
 
   const sectionBuckets = React.useMemo(() => {
@@ -622,6 +651,41 @@ export function AppSidebar({
 
               {!isLoading ? (
                 <>
+                  <ChannelGroupSection
+                    hasUnread={chatChannels.some((channel) =>
+                      unreadChannelIds.has(channel.id),
+                    )}
+                    isCollapsed={collapsedGroups.chats}
+                    isActiveChannel={selectedView === "channel"}
+                    activeWorkingByChannelId={activeWorkingByChannelId}
+                    items={chatChannels}
+                    channelLabels={chatLabels}
+                    sortMode={sortModeFor("chats")}
+                    onSortModeChange={(mode) => setSortModeFor("chats", mode)}
+                    actionsTestId="section-actions-chats"
+                    listTestId="chat-list"
+                    quickCreateLabel="New chat"
+                    showQuickCreate
+                    onQuickCreateClick={() => setIsNewChatOpen(true)}
+                    onMarkAllRead={() => {
+                      for (const channel of chatChannels) {
+                        onMarkChannelRead(channel.id, channel.lastMessageAt);
+                      }
+                    }}
+                    onMarkChannelRead={onMarkChannelRead}
+                    onMarkChannelUnread={onMarkChannelUnread}
+                    onSelectChannel={onSelectChannel}
+                    onToggleCollapsed={() => toggleCollapsedGroup("chats")}
+                    selectedChannelId={selectedChannelId}
+                    title="Chats"
+                    unreadChannelCounts={unreadChannelCounts}
+                    unreadChannelIds={unreadChannelIds}
+                    mutedChannelIds={mutedChannelIds}
+                    onMuteChannel={onMuteChannel}
+                    onUnmuteChannel={onUnmuteChannel}
+                    onDeleteChannel={requestDeleteChannel}
+                    onLeaveChannel={requestLeaveChannel}
+                  />
                   {starredChannels.length > 0 ? (
                     <ChannelGroupSection
                       hasUnread={starredChannels.some((c) =>
@@ -934,6 +998,12 @@ export function AppSidebar({
           }
         }}
         onCreate={handleCreateFromDialog}
+      />
+
+      <NewChatDialog
+        onCreate={onCreateChat}
+        onOpenChange={setIsNewChatOpen}
+        open={isNewChatOpen}
       />
 
       <AddCommunityDialog

@@ -1,4 +1,5 @@
 import { isEphemeralChannel } from "@/features/channels/lib/ephemeralChannel";
+import { isOrcaChatChannel } from "@/features/chats/chatChannel";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { Channel } from "@/shared/api/types";
 import { KIND_SYSTEM_MESSAGE } from "@/shared/constants/kinds";
@@ -20,6 +21,10 @@ export function getChannelIntroKind(channel: Channel): string {
 }
 
 export function getChannelIntroDescription(channel: Channel): string | null {
+  if (isOrcaChatChannel(channel)) {
+    return null;
+  }
+
   return (
     channel.topic?.trim() ||
     channel.purpose?.trim() ||
