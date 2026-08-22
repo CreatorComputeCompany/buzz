@@ -15,6 +15,8 @@ test("the Buzz listener follows the Orca runtime lifecycle", async () => {
   assert.match(unit, /^Restart=always$/m);
   assert.match(unit, /^EnvironmentFile=\/etc\/buzz-orca-agent\.env$/m);
   assert.match(unit, /^Environment=BUZZ_ACP_RESPOND_TO=anyone$/m);
+  assert.match(unit, /^Environment=BUZZ_ORCA_BASE_REF=main$/m);
+  assert.doesNotMatch(unit, /^Environment=BUZZ_ORCA_BASE_REF=feat\//m);
   assert.match(
     unit,
     /^Environment=BUZZ_ACP_ALLOWED_RESPOND_TO=owner-only,allowlist,anyone$/m,
