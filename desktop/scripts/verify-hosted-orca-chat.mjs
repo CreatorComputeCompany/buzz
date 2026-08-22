@@ -202,6 +202,15 @@ try {
       throw new Error("Orca embed must mount in the light DOM, not Shadow DOM");
     }
 
+    const forbiddenChrome = embed.locator(
+      ".worktree-sidebar-scrollbar, .sidebar-toggle",
+    );
+    if ((await forbiddenChrome.count()) !== 0) {
+      throw new Error(
+        "Focused Orca embed exposed workspace navigation or sidebar controls",
+      );
+    }
+
     // A fresh browser first sees Orca's own member-identity setup.
     const identityName = embed.locator("#multiplayer-name");
     const workspaceTab = embed.locator('[data-testid="sortable-tab"]').first();
