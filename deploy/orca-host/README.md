@@ -49,6 +49,17 @@ publish them as separate GitHub release archives whose roots are `main/` and
 `web/`. On the host, download those immutable assets and retain their GitHub
 SHA-256 digests. Then run:
 
+On macOS, suppress Apple extended attributes when creating Linux release
+archives; the installer intentionally rejects archive metadata and links:
+
+```bash
+COPYFILE_DISABLE=1 tar --no-xattrs -czf /tmp/orca-main.tgz -C out main
+COPYFILE_DISABLE=1 tar --no-xattrs -czf /tmp/orca-web.tgz -C out web
+shasum -a 256 /tmp/orca-main.tgz /tmp/orca-web.tgz
+```
+
+After publishing and downloading the immutable assets on the host, run:
+
 ```bash
 sudo ./install-bundle.sh \
   /tmp/orca-main.tgz MAIN_SHA256 \
@@ -83,6 +94,53 @@ endpoint to recover before running a chat acceptance test:
 ```bash
 until curl -fsS https://runtime.buzz-orca-host.boxd.sh/ >/dev/null; do sleep 2; done
 ```
+
+## Lazy migration of legacy Buzz worktrees
+
+Identity-scoped clients cannot list or open worktrees without their exact
+`ownerMemberKey`, so legacy unowned rows are hidden by default. Do not bulk
+assign them: historical rows do not contain enough authoritative user identity
+to infer an owner safely.
+
+Orca supports an opt-in lazy migration with
+`ORCA_BUZZ_LEGACY_CLAIM_ENABLED=1`. A claim occurs only while issuing a runtime
+ticket for an authenticated Buzz member, only when no already-owned worktree
+matches that chat, and only when exactly one unowned worktree matches the
+normalized channel identifier. Zero or multiple matches fail closed. The
+claim changes only that worktree's `ownerMemberKey`; it does not expose other
+legacy worktrees.
+
+Before enabling the flag, record a read-only baseline from the host profile:
+
+```bash
+jq '{
+  total: (.worktreeMeta | length),
+  unowned: ([.worktreeMeta[] | select((.ownerMemberKey // "") == "")] | length),
+  owned: ([.worktreeMeta[] | select((.ownerMemberKey // "") != "")] | length)
+}' /home/boxd/.config/orca/profiles/local-default/orca-data.json
+```
+
+Then use this reviewed rollout:
+
+1. Merge and deploy the Orca ambiguity guard and member-isolation tests.
+2. Back up the complete Orca profile while both services are stopped; record
+   the backup path and checksum outside the profile directory.
+3. Set `ORCA_BUZZ_LEGACY_CLAIM_ENABLED=1` in `/etc/orca-serve.env`, restart
+   `orca-serve.service`, and confirm the coupled agent service and public health
+   check recover.
+4. Open one known legacy Buzz chat as its real signed-in owner. Confirm its
+   Session opens the expected path and that a different member receives
+   `workspace_access_denied` for that worktree.
+5. Re-run the count query. Exactly one row should move from unowned to owned.
+   Stop the rollout if the delta differs or the ticket reports an ambiguous
+   match.
+6. Leave migration lazy; never script ticket creation across all chats. Disable
+   the flag after the active legacy population has migrated or before any
+   investigation.
+
+Disabling the flag stops future claims but does not erase completed ownership.
+If a claim is proven wrong, stop both services and restore the reviewed full
+profile backup; do not hand-edit the live JSON file.
 
 ## Rollback
 
