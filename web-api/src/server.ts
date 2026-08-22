@@ -9,6 +9,10 @@ import {
   validateEventTemplate,
 } from "./identity.js";
 import { isOrcaRuntimeUserAllowed } from "./orca-access.js";
+import {
+  toOrcaRuntimeResponse,
+  type OrcaRuntimeTicket,
+} from "./orca-ticket-response.js";
 
 const port = Number(process.env.PORT ?? 3000);
 
@@ -33,7 +37,7 @@ async function mintOrcaTicket(
   identity: { pubkey: string },
   user: { email: string; name: string },
   channelId: string,
-): Promise<{ pairingUrl: string; worktreeId?: string } | null> {
+): Promise<OrcaRuntimeTicket | null> {
   const secret = process.env.BUZZ_ORCA_APP_TICKET_SECRET;
   const issuer = process.env.BUZZ_ORCA_IDENTITY_ISSUER ?? "https://buzz.chat";
   if (!secret) return null;
@@ -55,10 +59,7 @@ async function mintOrcaTicket(
       }),
     });
     if (!response.ok) return null;
-    return (await response.json()) as {
-      pairingUrl: string;
-      worktreeId?: string;
-    };
+    return (await response.json()) as OrcaRuntimeTicket;
   } catch {
     return null;
   }
@@ -148,10 +149,9 @@ async function route(request: Request): Promise<Response> {
         { status: 403 },
       );
     }
-    return Response.json(
-      { pairingUrl: ticket.pairingUrl, worktreeId: ticket.worktreeId },
-      { headers: { "Cache-Control": "no-store, private" } },
-    );
+    return Response.json(toOrcaRuntimeResponse(ticket), {
+      headers: { "Cache-Control": "no-store, private" },
+    });
   }
 
   return new Response("Not found", { status: 404 });
