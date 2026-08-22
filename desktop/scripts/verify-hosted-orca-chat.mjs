@@ -22,6 +22,8 @@ const pairingFile = process.env.BUZZ_ORCA_PAIRING_FILE;
 const skipTestAllowlist = process.env.BUZZ_ORCA_SKIP_TEST_ALLOWLIST === "true";
 const testMobile = process.env.BUZZ_ORCA_TEST_MOBILE === "true";
 const testAutoPairing = process.env.BUZZ_ORCA_TEST_AUTO_PAIRING === "true";
+const manageRuntimeAllowlist =
+  process.env.BUZZ_ORCA_TEST_MANAGE_RUNTIME_ALLOWLIST === "true";
 const baselineRuntimeUserIds =
   process.env.BUZZ_ORCA_ALLOWED_USER_IDS ?? "mvNHXRXkrigB9k1JQlk5JGIMuRmk8sig";
 
@@ -135,7 +137,7 @@ try {
     return invoke("get_identity");
   });
   if (!identity?.pubkey) throw new Error("Web account identity is unavailable");
-  if (testAutoPairing) {
+  if (testAutoPairing && manageRuntimeAllowlist) {
     const session = await page.evaluate(async () => {
       const response = await fetch("/api/auth/get-session", {
         credentials: "include",

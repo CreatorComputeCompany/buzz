@@ -20,7 +20,9 @@ Environment=BUZZ_ACP_AGENT_COMMAND=/home/boxd/buzz/target/release/buzz-orca-acp
 Environment=BUZZ_ACP_AGENT_ARGS=acp
 Environment=BUZZ_ACP_MCP_COMMAND=
 Environment=BUZZ_ACP_NO_MEMORY=true
-Environment=BUZZ_ACP_ALLOWED_RESPOND_TO=owner-only,allowlist
+Environment=BUZZ_ACP_RESPOND_TO=anyone
+Environment=BUZZ_ACP_RESPOND_TO_ALLOWLIST=
+Environment=BUZZ_ACP_ALLOWED_RESPOND_TO=owner-only,allowlist,anyone
 Environment=BUZZ_ACP_MAX_TURN_DURATION=1800
 Environment=BUZZ_ORCA_CLI=/opt/orca/orca-extracted/resources/bin/orca-ide
 Environment=BUZZ_ORCA_REPO_SELECTOR=name:buzz

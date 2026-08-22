@@ -6,6 +6,7 @@ primary_region = "lhr"
 
 [env]
   BETTER_AUTH_URL = "https://buzz-web-alpha.vercel.app"
+  BUZZ_ORCA_ACCESS_MODE = "authenticated"
   NODE_ENV = "production"
   PORT = "3000"
 

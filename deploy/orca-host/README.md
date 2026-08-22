@@ -6,6 +6,11 @@ This directory is the source of truth for the two systemd services on
 - `orca-serve.service` runs the headless Orca runtime and embedded web client.
 - `buzz-orca-agent.service` listens to Buzz and dispatches work to that runtime.
 
+Production admits any authenticated Buzz member at the listener and web API
+gates. The runtime ticket binds that member's signed Buzz identity to a member
+key, and Orca enforces the key on catalog and terminal/worktree RPC access. Do
+not open either ingress gate unless those runtime isolation tests are green.
+
 The agent is both `Requires=` and `PartOf=` the runtime. `Requires=` prevents an
 agent without a runtime; `PartOf=` makes `systemctl restart orca-serve` restart
 the agent in the same transaction. This matters because a dependency stop is a

@@ -16,9 +16,21 @@ const respondToAllowlist = (process.env.BUZZ_ORCA_RESPOND_TO_ALLOWLIST ?? "")
   .split(",")
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
-const respondTo = respondToAllowlist.length > 0 ? "allowlist" : "owner-only";
+const respondTo =
+  process.env.BUZZ_ORCA_RESPOND_TO ??
+  (respondToAllowlist.length > 0 ? "allowlist" : "owner-only");
 
 if (!outputPath) throw new Error("BUZZ_ORCA_ENV_OUTPUT is required");
+if (!new Set(["owner-only", "allowlist", "anyone"]).has(respondTo)) {
+  throw new Error(
+    "BUZZ_ORCA_RESPOND_TO must be owner-only, allowlist, or anyone",
+  );
+}
+if (respondTo === "allowlist" && respondToAllowlist.length === 0) {
+  throw new Error(
+    "BUZZ_ORCA_RESPOND_TO_ALLOWLIST is required in allowlist mode",
+  );
+}
 if (respondToAllowlist.some((pubkey) => !/^[0-9a-f]{64}$/.test(pubkey))) {
   throw new Error("BUZZ_ORCA_RESPOND_TO_ALLOWLIST contains an invalid pubkey");
 }

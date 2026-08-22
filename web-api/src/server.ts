@@ -8,17 +8,9 @@ import {
   signTemplate,
   validateEventTemplate,
 } from "./identity.js";
+import { isOrcaRuntimeUserAllowed } from "./orca-access.js";
 
 const port = Number(process.env.PORT ?? 3000);
-
-function orcaRuntimeAllowedUserIds(): Set<string> {
-  return new Set(
-    (process.env.BUZZ_ORCA_ALLOWED_USER_IDS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean),
-  );
-}
 
 function orcaRuntimeHttpBase(pairingUrl: string): string | null {
   try {
@@ -129,7 +121,7 @@ async function route(request: Request): Promise<Response> {
   }
 
   if (url.pathname === "/api/buzz/orca-runtime" && request.method === "GET") {
-    if (!orcaRuntimeAllowedUserIds().has(session.user.id)) {
+    if (!isOrcaRuntimeUserAllowed(session.user.id)) {
       return Response.json({ error: "orca_access_denied" }, { status: 403 });
     }
     const pairingUrl = process.env.BUZZ_ORCA_PAIRING_URL;
@@ -171,7 +163,9 @@ createServer(async (incoming, outgoing) => {
   try {
     const response = await route(await toWebRequest(incoming));
     outgoing.statusCode = response.status;
-    response.headers.forEach((value, name) => outgoing.setHeader(name, value));
+    response.headers.forEach((value, name) => {
+      outgoing.setHeader(name, value);
+    });
     const setCookies = response.headers.getSetCookie();
     if (setCookies.length) outgoing.setHeader("set-cookie", setCookies);
     outgoing.end(Buffer.from(await response.arrayBuffer()));
