@@ -1,0 +1,46 @@
+[Unit]
+Description=Buzz Orca coding agent
+After=network-online.target orca-serve.service
+Wants=network-online.target
+Requires=orca-serve.service
+# A runtime restart must restart the relay listener too. Without this, a clean
+# dependency stop leaves the listener inactive despite Restart=always.
+PartOf=orca-serve.service
+
+[Service]
+Type=simple
+User=boxd
+Group=boxd
+WorkingDirectory=/home/boxd/buzz
+ExecStart=/home/boxd/buzz/target/release/buzz-acp
+EnvironmentFile=/etc/buzz-orca-agent.env
+Environment=HOME=/home/boxd
+Environment=BUZZ_RELAY_URL=wss://imabird-buzz-relay.fly.dev
+Environment=BUZZ_ACP_AGENT_COMMAND=/home/boxd/buzz/target/release/buzz-orca-acp
+Environment=BUZZ_ACP_AGENT_ARGS=acp
+Environment=BUZZ_ACP_MCP_COMMAND=
+Environment=BUZZ_ACP_NO_MEMORY=true
+Environment=BUZZ_ACP_ALLOWED_RESPOND_TO=owner-only,allowlist
+Environment=BUZZ_ACP_MAX_TURN_DURATION=1800
+Environment=BUZZ_ORCA_CLI=/opt/orca/orca-extracted/resources/bin/orca-ide
+Environment=BUZZ_ORCA_REPO_SELECTOR=name:buzz
+Environment=BUZZ_ORCA_BASE_REF=feat/full-buzz-web
+Environment=BUZZ_ORCA_STATE_FILE=/var/lib/buzz-orca-agent/sessions.json
+Environment=BUZZ_ORCA_MAX_CONCURRENT_TURNS=2
+Environment=BUZZ_ORCA_POLL_INTERVAL_MS=1000
+Environment=BUZZ_ORCA_TURN_TIMEOUT_SECS=1800
+Environment=RUST_LOG=buzz_acp=info,buzz_orca_acp=info
+StateDirectory=buzz-orca-agent
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=false
+StandardOutput=append:/var/log/buzz-orca-agent.log
+StandardError=append:/var/log/buzz-orca-agent.log
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
