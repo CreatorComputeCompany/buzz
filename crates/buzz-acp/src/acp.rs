@@ -655,6 +655,44 @@ impl AcpClient {
         system_prompt: Option<SystemPromptTransport<'_>>,
         session_title: Option<&str>,
     ) -> Result<SessionNewResponse, AcpError> {
+        self.session_new_full_for_conversation(cwd, mcp_servers, system_prompt, session_title, None)
+            .await
+    }
+
+    /// Send `session/new` with a stable Buzz conversation key in ACP metadata.
+    ///
+    /// Standard agents ignore the namespaced metadata. Adapters that manage
+    /// durable external sessions can use it to restore the correct runtime
+    /// without treating a mutable display title as an identifier.
+    pub async fn session_new_full_for_conversation(
+        &mut self,
+        cwd: &str,
+        mcp_servers: Vec<McpServer>,
+        system_prompt: Option<SystemPromptTransport<'_>>,
+        session_title: Option<&str>,
+        conversation_key: Option<&str>,
+    ) -> Result<SessionNewResponse, AcpError> {
+        self.session_new_full_for_conversation_config(
+            cwd,
+            mcp_servers,
+            system_prompt,
+            session_title,
+            conversation_key,
+            None,
+        )
+        .await
+    }
+
+    /// Send `session/new` with stable Buzz conversation and runtime metadata.
+    pub async fn session_new_full_for_conversation_config(
+        &mut self,
+        cwd: &str,
+        mcp_servers: Vec<McpServer>,
+        system_prompt: Option<SystemPromptTransport<'_>>,
+        session_title: Option<&str>,
+        conversation_key: Option<&str>,
+        runtime_config: Option<&serde_json::Value>,
+    ) -> Result<SessionNewResponse, AcpError> {
         let mut params = serde_json::json!({
             "cwd": cwd,
             "mcpServers": mcp_servers,
@@ -672,6 +710,13 @@ impl AcpClient {
         if let Some(title) = session_title {
             // Merge — _meta may already carry systemPrompt from ClaudeMeta above.
             params["_meta"]["sessionTitle"] = serde_json::Value::String(title.to_owned());
+        }
+        if let Some(conversation_key) = conversation_key {
+            params["_meta"]["buzz"]["conversationKey"] =
+                serde_json::Value::String(conversation_key.to_owned());
+        }
+        if let Some(runtime_config) = runtime_config {
+            params["_meta"]["buzz"]["runtime"] = runtime_config.clone();
         }
         let result = self.send_request("session/new", params).await?;
         let session_id = result["sessionId"]

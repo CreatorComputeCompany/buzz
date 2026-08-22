@@ -12,6 +12,7 @@ export type ChannelSortMode = "alpha" | "recent";
  */
 export type ChannelSortGroupKey =
   | "starred"
+  | "chats"
   | "channels"
   | "forums"
   | "dms"
@@ -74,6 +75,7 @@ export function boundChannelSortStore(
   if (entries.length <= MAX_CHANNEL_SORT_GROUPS) return store;
   const isFixedGroup = (key: string) =>
     key === "starred" ||
+    key === "chats" ||
     key === "channels" ||
     key === "forums" ||
     key === "dms";

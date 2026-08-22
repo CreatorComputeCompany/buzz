@@ -1,0 +1,25 @@
+[Unit]
+Description=Orca runtime server
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=boxd
+Group=boxd
+WorkingDirectory=/home/boxd
+EnvironmentFile=/etc/orca-serve.env
+Environment=LIBGL_ALWAYS_SOFTWARE=1
+ExecStart=/opt/orca/orca-extracted/AppRun serve --port 6768 --pairing-address https://runtime.buzz-orca-host.boxd.sh --no-sandbox
+StandardOutput=append:/home/boxd/orca-serve.log
+StandardError=append:/home/boxd/orca-serve.log
+KillMode=mixed
+Restart=on-failure
+RestartPreventExitStatus=3
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Hash, LogIn } from "lucide-react";
+import { Hash, LogIn, MessagesSquare, SquareTerminal } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
@@ -59,6 +59,8 @@ import { KIND_SYSTEM_MESSAGE } from "@/shared/constants/kinds";
 import { useIsThreadPanelOverlay } from "@/shared/hooks/use-mobile";
 import { channelChrome } from "@/shared/layout/chromeLayout";
 import { cn } from "@/shared/lib/cn";
+import { getOrcaChatConfig } from "@/features/chats/chatChannel";
+import { OrcaSessionView } from "@/features/chats/orca/OrcaSessionView";
 const HUDDLE_TRANSCRIPT_ROOT_STYLE = {
   "--buzz-channel-content-top-padding": "0rem",
   "--channel-top-chrome-height": "0.25rem",
@@ -177,6 +179,13 @@ export const ChannelPane = React.memo(function ChannelPane({
     activeChannel.visibility === "open" &&
     !activeChannel.archivedAt;
   const hasMainComposerOverlay = !isNonMemberView;
+  const orcaChatConfig = activeChannel
+    ? getOrcaChatConfig(activeChannel)
+    : null;
+  const [orcaChatView, setOrcaChatView] = React.useState<
+    "conversation" | "session"
+  >("conversation");
+  React.useEffect(() => setOrcaChatView("conversation"), [activeChannel?.id]);
   const activeChannelId = activeChannel?.id ?? null;
   const activeChannelIdRef = React.useRef(activeChannelId);
   const channelPaneMountedRef = React.useRef(false);
@@ -297,6 +306,9 @@ export const ChannelPane = React.memo(function ChannelPane({
 
     return pubkeys;
   }, [activityAgents, agentPubkeys, agentSessionAgents]);
+  const orcaChatAgentPubkey = activeChannel
+    ? getOrcaChatConfig(activeChannel)?.agentPubkey
+    : null;
   const handleSendMessage = React.useCallback(
     async (
       content: string,
@@ -309,15 +321,18 @@ export const ChannelPane = React.memo(function ChannelPane({
       } | null,
       forceRest?: boolean,
     ) => {
+      const effectiveMentionPubkeys = orcaChatAgentPubkey
+        ? [...new Set([...mentionPubkeys, orcaChatAgentPubkey])]
+        : mentionPubkeys;
       const shouldCompleteWelcomeBanner =
         isActiveWelcomeChannel &&
         (containsWelcomePersonaMention(content) ||
-          mentionsKnownAgent(mentionPubkeys, knownAgentPubkeys));
+          mentionsKnownAgent(effectiveMentionPubkeys, knownAgentPubkeys));
 
       messageTimelineRef.current?.scrollToBottomOnNextUpdate();
       await onSendMessage(
         content,
-        mentionPubkeys,
+        effectiveMentionPubkeys,
         mediaTags,
         channelId,
         threadContext,
@@ -344,6 +359,7 @@ export const ChannelPane = React.memo(function ChannelPane({
       isActiveWelcomeChannel,
       knownAgentPubkeys,
       onSendMessage,
+      orcaChatAgentPubkey,
     ],
   );
   const canDropInMainColumn =
@@ -567,76 +583,112 @@ export const ChannelPane = React.memo(function ChannelPane({
           }
         >
           {isHuddleTranscript ? null : header}
-          <MessageTimeline
-            ref={messageTimelineRef}
-            channelId={activeChannel?.id}
-            channelIntro={channelIntro}
-            directMessageIntro={directMessageIntro}
-            scrollContainerRef={timelineScrollRef}
-            currentPubkey={currentPubkey}
-            fetchOlder={fetchOlder}
-            followThreadById={followThreadById}
-            hasComposerOverlay={hasMainComposerOverlay}
-            hasOlderMessages={hasOlderMessages}
-            historyExhausted={historyExhausted}
-            hideDayDividers={isHuddleTranscript}
-            alwaysShowMessageIdentity={isHuddleTranscript}
-            hideAgentAccessBadges={isHuddleTranscript}
-            pinnedIntro={
-              isHuddleTranscript ? <HuddleTranscriptIntro /> : undefined
-            }
-            huddleMemberPubkeys={huddleMemberPubkeys}
-            huddleMemberPubkeysPending={huddleMemberPubkeysPending}
-            isFetchingOlder={isFetchingOlder}
-            isFollowingThreadById={isFollowingThreadById}
-            isMessageUnreadById={isMessageUnreadById}
-            personaLookup={personaLookup}
-            profiles={profiles}
-            ownerProfiles={ownerProfiles}
-            unfollowThreadById={unfollowThreadById}
-            emptyDescription={
-              activeChannel?.channelType === "forum"
-                ? "Select a stream or DM to load real message history in this first integration pass."
-                : "Messages and sub-replies will appear here once the relay has history for this channel."
-            }
-            emptyTitle={
-              activeChannel
-                ? activeChannel.channelType === "forum"
-                  ? "Forum channels are next"
-                  : "No messages yet"
-                : "No channel selected"
-            }
-            isLoading={isHuddleTranscript ? false : isTimelineLoading}
-            entranceMessageId={entranceMessageId}
-            onEntranceMessageComplete={onEntranceMessageComplete}
-            mainEntries={mainTimelineEntries}
-            threadSummaries={threadSummaries}
-            messages={visibleMessages}
-            firstUnreadMessageId={firstUnreadMessageId}
-            unreadCount={unreadCount}
-            onDelete={onDelete}
-            onEdit={onEdit}
-            onMarkUnread={onMarkUnread}
-            onMarkRead={onMarkRead}
-            onReply={timelineReplyHandler}
-            onOpenThread={isHuddleTranscript ? undefined : onOpenThread}
-            channelName={activeChannel?.name}
-            channelType={activeChannel?.channelType ?? null}
-            isSendingVideoReviewComment={isSending}
-            onSendVideoReviewComment={
-              activeChannel?.archivedAt ? undefined : onSendVideoReviewComment
-            }
-            onTargetReached={onTargetReached}
-            onToggleReaction={onToggleReaction}
-            targetMessageId={targetMessageId}
-            splitThreadPanelOpen={
-              useSplitAuxiliaryPane &&
-              !useFocusThreadDrawer &&
-              Boolean(openThreadHeadId)
-            }
-            threadUnreadCounts={threadUnreadCounts}
-          />
-          {isNonMemberView ? (
+          {orcaChatConfig ? (
+            <div className="pointer-events-auto relative z-50 flex shrink-0 justify-end border-b border-border px-3 pb-1.5 pt-[var(--buzz-channel-content-top-padding,5.75rem)]">
+              <Button
+                aria-label="Show conversation"
+                className="h-7 gap-1.5 px-2 text-xs"
+                data-testid="orca-chat-conversation-view"
+                onClick={() => setOrcaChatView("conversation")}
+                size="sm"
+                variant={
+                  orcaChatView === "conversation" ? "secondary" : "ghost"
+                }
+              >
+                <MessagesSquare className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Conversation</span>
+              </Button>
+              <Button
+                aria-label="Show Orca session"
+                className="h-7 gap-1.5 px-2 text-xs"
+                data-testid="orca-chat-session-view"
+                onClick={() => setOrcaChatView("session")}
+                size="sm"
+                variant={orcaChatView === "session" ? "secondary" : "ghost"}
+              >
+                <SquareTerminal className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Session</span>
+              </Button>
+            </div>
+          ) : null}
+          {orcaChatConfig && orcaChatView === "session" && activeChannel ? (
+            <OrcaSessionView
+              channelId={activeChannel.id}
+              config={orcaChatConfig}
+            />
+          ) : (
+            <MessageTimeline
+              ref={messageTimelineRef}
+              channelId={activeChannel?.id}
+              channelIntro={channelIntro}
+              directMessageIntro={directMessageIntro}
+              scrollContainerRef={timelineScrollRef}
+              currentPubkey={currentPubkey}
+              fetchOlder={fetchOlder}
+              followThreadById={followThreadById}
+              hasComposerOverlay={hasMainComposerOverlay}
+              hasOlderMessages={hasOlderMessages}
+              historyExhausted={historyExhausted}
+              hideDayDividers={isHuddleTranscript}
+              alwaysShowMessageIdentity={isHuddleTranscript}
+              hideAgentAccessBadges={isHuddleTranscript}
+              pinnedIntro={
+                isHuddleTranscript ? <HuddleTranscriptIntro /> : undefined
+              }
+              huddleMemberPubkeys={huddleMemberPubkeys}
+              huddleMemberPubkeysPending={huddleMemberPubkeysPending}
+              isFetchingOlder={isFetchingOlder}
+              isFollowingThreadById={isFollowingThreadById}
+              isMessageUnreadById={isMessageUnreadById}
+              personaLookup={personaLookup}
+              profiles={profiles}
+              ownerProfiles={ownerProfiles}
+              unfollowThreadById={unfollowThreadById}
+              emptyDescription={
+                activeChannel?.channelType === "forum"
+                  ? "Select a stream or DM to load real message history in this first integration pass."
+                  : "Messages and sub-replies will appear here once the relay has history for this channel."
+              }
+              emptyTitle={
+                activeChannel
+                  ? activeChannel.channelType === "forum"
+                    ? "Forum channels are next"
+                    : "No messages yet"
+                  : "No channel selected"
+              }
+              isLoading={isHuddleTranscript ? false : isTimelineLoading}
+              entranceMessageId={entranceMessageId}
+              onEntranceMessageComplete={onEntranceMessageComplete}
+              mainEntries={mainTimelineEntries}
+              threadSummaries={threadSummaries}
+              messages={visibleMessages}
+              firstUnreadMessageId={firstUnreadMessageId}
+              unreadCount={unreadCount}
+              onDelete={onDelete}
+              onEdit={onEdit}
+              onMarkUnread={onMarkUnread}
+              onMarkRead={onMarkRead}
+              onReply={timelineReplyHandler}
+              onOpenThread={isHuddleTranscript ? undefined : onOpenThread}
+              channelName={activeChannel?.name}
+              channelType={activeChannel?.channelType ?? null}
+              isSendingVideoReviewComment={isSending}
+              onSendVideoReviewComment={
+                activeChannel?.archivedAt ? undefined : onSendVideoReviewComment
+              }
+              onTargetReached={onTargetReached}
+              onToggleReaction={onToggleReaction}
+              targetMessageId={targetMessageId}
+              splitThreadPanelOpen={
+                useSplitAuxiliaryPane &&
+                !useFocusThreadDrawer &&
+                Boolean(openThreadHeadId)
+              }
+              threadUnreadCounts={threadUnreadCounts}
+            />
+          )}
+          {orcaChatConfig &&
+          orcaChatView === "session" ? null : isNonMemberView ? (
             <div
               data-testid="join-banner"
               className="flex items-center gap-3 border-t border-border/80 bg-card/50 px-5 py-3"

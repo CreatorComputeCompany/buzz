@@ -77,8 +77,9 @@ import {
 } from "@/shared/lib/linkPreviewSnapshot";
 
 type TestIdentity = {
-  privateKey: string;
+  privateKey?: string;
   pubkey: string;
+  signerUrl?: string;
   username: string;
 };
 
@@ -6023,6 +6024,8 @@ function createMockEvent(
   };
 }
 
+const WEB_REQUEST_TIMEOUT_MS = 15_000;
+
 async function signWithIdentity(
   identity: TestIdentity,
   template: {
@@ -6032,6 +6035,21 @@ async function signWithIdentity(
     tags: string[][];
   },
 ) {
+  if (identity.signerUrl) {
+    const response = await fetch(identity.signerUrl, {
+      method: "POST",
+      credentials: "include",
+      signal: AbortSignal.timeout(WEB_REQUEST_TIMEOUT_MS),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(template),
+    });
+    await assertOk(response);
+    return (await response.json()) as RelayEvent;
+  }
+
+  if (!identity.privateKey) {
+    throw new Error("Identity signer required.");
+  }
   const secretKey = hexToBytes(identity.privateKey);
 
   return finalizeEvent(
@@ -6043,6 +6061,43 @@ async function signWithIdentity(
     },
     secretKey,
   );
+}
+
+function encodeBase64Utf8(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+async function nip98Authorization(
+  identity: TestIdentity,
+  url: string,
+  method: string,
+  body: string,
+): Promise<string> {
+  const tags = [
+    ["u", url],
+    ["method", method.toUpperCase()],
+    ["nonce", crypto.randomUUID()],
+  ];
+  if (body) tags.push(["payload", await sha256Hex(body)]);
+  const event = await signWithIdentity(identity, {
+    kind: 27235,
+    content: "",
+    tags,
+  });
+  return `Nostr ${encodeBase64Utf8(JSON.stringify(event))}`;
 }
 
 async function assertOk(response: Response) {
@@ -6070,15 +6125,22 @@ async function relayJsonRequest<T>(
 ): Promise<T> {
   const identity = getRelayIdentity(config);
   const headers = new Headers(init.headers);
+  const url = `${getRelayHttpUrl(config)}${path}`;
+  const method = init.method ?? "GET";
+  const body = typeof init.body === "string" ? init.body : "";
 
-  headers.set("X-Pubkey", identity.pubkey);
+  headers.set(
+    "Authorization",
+    await nip98Authorization(identity, url, method, body),
+  );
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${getRelayHttpUrl(config)}${path}`, {
+  const response = await fetch(url, {
     ...init,
     headers,
+    signal: init.signal ?? AbortSignal.timeout(WEB_REQUEST_TIMEOUT_MS),
   });
   await assertOk(response);
   return response.json() as Promise<T>;
@@ -6101,16 +6163,28 @@ async function relayQuery(
     throw new Error(P_GATED_REJECTION_MESSAGE);
   }
 
-  const response = await fetch(`${getRelayHttpUrl(config)}/query`, {
+  return relayJsonRequest(config, "/query", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Pubkey": identity.pubkey,
     },
     body: JSON.stringify(filters),
   });
+}
+
+async function fetchRelaySelf(config: E2eConfig | undefined): Promise<string> {
+  const response = await fetch(getRelayHttpUrl(config), {
+    headers: { Accept: "application/nostr+json" },
+    signal: AbortSignal.timeout(WEB_REQUEST_TIMEOUT_MS),
+  });
   await assertOk(response);
-  return response.json() as Promise<RelayEvent[]>;
+  const document = (await response.json()) as { self?: unknown };
+  if (typeof document.self !== "string" || !document.self) {
+    throw new Error(
+      "Relay NIP-11 document does not advertise its signing key.",
+    );
+  }
+  return document.self.toLowerCase();
 }
 
 async function submitSignedEvent(
@@ -6808,7 +6882,7 @@ async function handleCreateChannel(
   return {
     id: channelId,
     name: getTag("name") ?? args.name,
-    description: getTag("about") ?? args.description ?? null,
+    description: getTag("about") ?? args.description ?? "",
     channel_type: args.channelType,
     visibility: args.visibility,
     topic: null,
@@ -6830,7 +6904,7 @@ async function handleOpenDm(
     expectedSignerPubkey?: string | null;
   },
   config: E2eConfig | undefined,
-) {
+): Promise<RawChannel> {
   const delayMs = config?.mock?.openDmDelayMs ?? 0;
   if (delayMs > 0) {
     await new Promise((resolve) => window.setTimeout(resolve, delayMs));
@@ -6913,18 +6987,19 @@ async function handleOpenDm(
   return {
     id: channelId,
     name: getTag("name") ?? "DM",
-    description: null,
+    description: getTag("about") ?? "",
     channel_type: "dm",
     visibility: "private",
     topic: null,
     purpose: null,
-    role: "member",
+    member_count: participantPubkeys.length,
+    member_pubkeys: participantPubkeys,
+    last_message_at: null,
     archived_at: null,
+    participants: participantPubkeys,
+    participant_pubkeys: participantPubkeys,
     ttl_seconds: null,
     ttl_deadline: null,
-    created_at: ev?.created_at
-      ? new Date(ev.created_at * 1000).toISOString()
-      : new Date().toISOString(),
   };
 }
 
@@ -7892,6 +7967,87 @@ async function handleListRelayAgents(
   await delayAgentList(config);
   const error = config?.mock?.relayAgentListErrors?.shift();
   if (error) throw new Error(error);
+  const identity = getIdentity(config);
+  if (identity) {
+    const relaySelf = await fetchRelaySelf(config);
+    const membershipEvents = await relayQuery(config, [
+      {
+        kinds: [39002],
+        authors: [relaySelf],
+        "#p": [identity.pubkey],
+        limit: 1000,
+      },
+    ]);
+    const channelIdsByAgent = new Map<string, Set<string>>();
+    for (const event of membershipEvents) {
+      const tags = (event.tags ?? []) as string[][];
+      const channelId = tags.find((tag) => tag[0] === "d")?.[1];
+      if (!channelId) continue;
+      for (const tag of tags) {
+        const role = tag[3] ?? tag[2];
+        const pubkey = tag[1]?.toLowerCase();
+        if (tag[0] !== "p" || role !== "bot" || !pubkey) continue;
+        const channelIds = channelIdsByAgent.get(pubkey) ?? new Set<string>();
+        channelIds.add(channelId);
+        channelIdsByAgent.set(pubkey, channelIds);
+      }
+    }
+
+    const directoryFilters = [...channelIdsByAgent.keys()].map((pubkey) => ({
+      kinds: [10100],
+      authors: [pubkey],
+      limit: 1,
+    }));
+    const directoryEvents: RelayEvent[] = [];
+    for (let offset = 0; offset < directoryFilters.length; offset += 10) {
+      directoryEvents.push(
+        ...(await relayQuery(
+          config,
+          directoryFilters.slice(offset, offset + 10),
+        )),
+      );
+    }
+    return directoryEvents.flatMap((event) => {
+      let content: Record<string, unknown>;
+      try {
+        content = JSON.parse(event.content) as Record<string, unknown>;
+      } catch {
+        return [];
+      }
+      const pubkey = event.pubkey.toLowerCase();
+      const channelIds = channelIdsByAgent.get(pubkey);
+      if (!channelIds) return [];
+      const respondTo =
+        content.respond_to === "owner-only" ||
+        content.respond_to === "allowlist" ||
+        content.respond_to === "anyone"
+          ? content.respond_to
+          : undefined;
+      return [
+        {
+          pubkey,
+          owner_pubkey: null,
+          name:
+            typeof content.name === "string"
+              ? content.name
+              : typeof content.display_name === "string"
+                ? content.display_name
+                : pubkey.slice(0, 12),
+          agent_type: "agent",
+          channels: [],
+          channel_ids: [...channelIds],
+          capabilities: [],
+          status: "offline" as const,
+          respond_to: respondTo,
+          respond_to_allowlist: Array.isArray(content.respond_to_allowlist)
+            ? content.respond_to_allowlist.filter(
+                (value): value is string => typeof value === "string",
+              )
+            : [],
+        },
+      ];
+    });
+  }
   syncMockRelayAgentsFromManagedAgents();
   return mockRelayAgents.map(cloneRelayAgent);
 }
@@ -8592,7 +8748,7 @@ function upsertMockPersonaEvent(
     }),
   };
   const event: RelayEvent = identity
-    ? finalizeEvent(template, hexToBytes(identity.privateKey))
+    ? finalizeEvent(template, hexToBytes(identity.privateKey as string))
     : {
         ...template,
         id: mockEventId(),
@@ -9500,6 +9656,105 @@ async function resolveMockUploadDescriptorForBytes(
   };
 }
 
+function mediaContentType(filename: string): string {
+  const normalized = filename.toLowerCase();
+  if (normalized.endsWith(".pdf")) return "application/pdf";
+  if (normalized.endsWith(".png")) return "image/png";
+  if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) {
+    return "image/jpeg";
+  }
+  if (normalized.endsWith(".gif")) return "image/gif";
+  if (normalized.endsWith(".webp")) return "image/webp";
+  if (normalized.endsWith(".txt")) return "text/plain";
+  return "application/octet-stream";
+}
+
+async function uploadRelayMedia(
+  args: { data: number[] | Uint8Array; filename?: string | null },
+  config: E2eConfig | undefined,
+): Promise<RawBlobDescriptor> {
+  const identity = getRelayIdentity(config);
+  const bytes = Uint8Array.from(args.data);
+  if (bytes.length === 0) throw new Error("empty upload");
+
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const sha256 = Array.from(new Uint8Array(digest), (value) =>
+    value.toString(16).padStart(2, "0"),
+  ).join("");
+  const relayHttpUrl = getRelayHttpUrl(config);
+  const server = new URL(relayHttpUrl).host;
+  const event = await signWithIdentity(identity, {
+    kind: 24242,
+    content: "Upload buzz-media",
+    tags: [
+      ["t", "upload"],
+      ["x", sha256],
+      ["expiration", String(Math.floor(Date.now() / 1000) + 300)],
+      ["server", server],
+    ],
+  });
+  const response = await fetch(`${relayHttpUrl}/upload`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Nostr ${encodeBase64Utf8(JSON.stringify(event))}`,
+      "Content-Type": mediaContentType(args.filename ?? "upload.bin"),
+      "X-SHA-256": sha256,
+    },
+    body: bytes,
+  });
+  await assertOk(response);
+  const descriptor = (await response.json()) as RawBlobDescriptor;
+  return { ...descriptor, filename: args.filename ?? "upload.bin" };
+}
+
+async function fetchRelayMedia(
+  url: string,
+  config: E2eConfig | undefined,
+): Promise<ArrayBuffer> {
+  const identity = getRelayIdentity(config);
+  const relayHttpUrl = getRelayHttpUrl(config);
+  const relayOrigin = new URL(relayHttpUrl).origin;
+  const mediaUrl = new URL(url);
+  if (
+    mediaUrl.origin !== relayOrigin ||
+    !mediaUrl.pathname.startsWith("/media/")
+  ) {
+    throw new Error("media URL must use the active relay");
+  }
+  const event = await signWithIdentity(identity, {
+    kind: 24242,
+    content: "Get buzz-media",
+    tags: [
+      ["t", "get"],
+      ["expiration", String(Math.floor(Date.now() / 1000) + 600)],
+      ["server", mediaUrl.host],
+    ],
+  });
+  const response = await fetch(mediaUrl, {
+    headers: {
+      Authorization: `Nostr ${encodeBase64Utf8(JSON.stringify(event))}`,
+    },
+  });
+  await assertOk(response);
+  return response.arrayBuffer();
+}
+
+async function downloadRelayMedia(
+  args: { url: string; filename: string },
+  config: E2eConfig | undefined,
+): Promise<boolean> {
+  const bytes = await fetchRelayMedia(args.url, config);
+  const objectUrl = URL.createObjectURL(new Blob([bytes]));
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = args.filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  return true;
+}
+
 async function handleSendChannelMessage(
   args: {
     channelId: string;
@@ -9888,11 +10143,6 @@ async function handleAddReaction(
   args: { eventId: string; emoji: string; emojiUrl?: string | null },
   config: E2eConfig | undefined,
 ): Promise<void> {
-  const channelId = findMockEventChannel(args.eventId);
-  if (!channelId) {
-    throw new Error(`mock add_reaction: unknown target event ${args.eventId}`);
-  }
-
   const emoji = args.emoji.trim();
   // Real add_reaction events carry only the target `e` tag. Channel live
   // subscriptions already know which channel matched and restore that context
@@ -9901,6 +10151,20 @@ async function handleAddReaction(
   if (args.emojiUrl) {
     const shortcode = emoji.replace(/^:+/, "").replace(/:+$/, "").toLowerCase();
     tags.push(["emoji", shortcode, args.emojiUrl]);
+  }
+
+  if (getIdentity(config)) {
+    await submitSignedEvent(config, {
+      kind: KIND_REACTION,
+      content: emoji,
+      tags,
+    });
+    return;
+  }
+
+  const channelId = findMockEventChannel(args.eventId);
+  if (!channelId) {
+    throw new Error(`mock add_reaction: unknown target event ${args.eventId}`);
   }
 
   const event = createMockEvent(
@@ -9927,13 +10191,33 @@ async function handleRemoveReaction(
   args: { eventId: string; emoji: string },
   config: E2eConfig | undefined,
 ): Promise<void> {
+  const identity = getIdentity(config);
+  const emoji = args.emoji.trim();
+  if (identity) {
+    const events = await relayQuery(config, [
+      {
+        kinds: [KIND_REACTION],
+        authors: [identity.pubkey],
+        "#e": [args.eventId],
+        limit: 100,
+      },
+    ]);
+    const reaction = events.find((event) => event.content.trim() === emoji);
+    if (!reaction) return;
+    await submitSignedEvent(config, {
+      kind: KIND_DELETION,
+      content: "",
+      tags: [["e", reaction.id]],
+    });
+    return;
+  }
+
   const channelId = findMockEventChannel(args.eventId);
   if (!channelId) {
     return;
   }
 
   const myPubkey = getMockMemberPubkey(config).toLowerCase();
-  const emoji = args.emoji.trim();
   const store = getMockMessageStore(channelId);
   const reaction = store.find(
     (event) =>
@@ -13404,6 +13688,9 @@ export function maybeInstallE2eTauriMocks() {
           window.__BUZZ_E2E_LINK_PREVIEW_UPLOAD_STARTS__ =
             (window.__BUZZ_E2E_LINK_PREVIEW_UPLOAD_STARTS__ ?? 0) + 1;
         }
+        if (getIdentity(activeConfig)) {
+          return uploadRelayMedia(input, activeConfig);
+        }
         return resolveMockUploadDescriptorForBytes(input, activeConfig);
       }
       case "cancel_media_upload": {
@@ -13417,6 +13704,9 @@ export function maybeInstallE2eTauriMocks() {
         return null;
       }
       case "upload_media_bytes_raw":
+        if (getIdentity(activeConfig)) {
+          throw new Error("Raw web uploads must include filename metadata.");
+        }
         return resolveMockUploadDescriptorForBytes(
           {
             data: payload as Uint8Array,
@@ -13427,7 +13717,11 @@ export function maybeInstallE2eTauriMocks() {
         // The real command fetches relay media through Rust reqwest and
         // replies with raw bytes (`tauri::ipc::Response` → ArrayBuffer). In
         // E2E the browser fetch suffices — specs serve the URL via page.route.
-        const response = await fetch((payload as { url: string }).url);
+        const url = (payload as { url: string }).url;
+        if (getIdentity(activeConfig)) {
+          return fetchRelayMedia(url, activeConfig);
+        }
+        const response = await fetch(url);
         if (!response.ok) throw new Error(`fetch failed: ${response.status}`);
         return await response.arrayBuffer();
       }
@@ -13456,11 +13750,18 @@ export function maybeInstallE2eTauriMocks() {
       }
       case "download_image":
       case "save_png_data_url":
-      case "download_file":
       case "save_agent_card":
         // The save dialog can't run headlessly; report a successful save so the
         // FileCard / image-menu click handlers resolve. Specs assert the
         // command was invoked via `__BUZZ_E2E_COMMANDS__`, not the dialog.
+        return true;
+      case "download_file":
+        if (getIdentity(activeConfig)) {
+          return downloadRelayMedia(
+            payload as { url: string; filename: string },
+            activeConfig,
+          );
+        }
         return true;
       case "card_mint_key_status":
         // Cards: pretend a key is configured in global defaults so the mint

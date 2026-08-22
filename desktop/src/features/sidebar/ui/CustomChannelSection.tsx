@@ -342,6 +342,7 @@ export function ChannelGroupSection({
   isActiveChannel,
   activeWorkingByChannelId,
   items,
+  channelLabels,
   listTestId,
   onBrowseClick,
   onCreateClick,
@@ -382,6 +383,7 @@ export function ChannelGroupSection({
   isActiveChannel: boolean;
   activeWorkingByChannelId?: ReadonlyMap<string, ActiveChannelTurnSummary>;
   items: Channel[];
+  channelLabels?: Record<string, string>;
   listTestId: string;
   onBrowseClick?: () => void;
   onCreateClick?: () => void;
@@ -438,6 +440,7 @@ export function ChannelGroupSection({
                   <DraggableChannelRow channelId={channel.id}>
                     <ChannelMenuButton
                       channel={channel}
+                      label={channelLabels?.[channel.id]}
                       activeWorking={activeWorkingByChannelId?.get(channel.id)}
                       hasUnread={unreadChannelIds.has(channel.id)}
                       unreadCount={unreadChannelCounts.get(channel.id) ?? 0}
@@ -451,6 +454,7 @@ export function ChannelGroupSection({
                 ) : (
                   <ChannelMenuButton
                     channel={channel}
+                    label={channelLabels?.[channel.id]}
                     activeWorking={activeWorkingByChannelId?.get(channel.id)}
                     hasUnread={unreadChannelIds.has(channel.id)}
                     unreadCount={unreadChannelCounts.get(channel.id) ?? 0}

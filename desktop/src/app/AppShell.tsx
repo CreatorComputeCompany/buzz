@@ -93,7 +93,13 @@ import { useRelayAutoHeal } from "@/shared/api/useRelayAutoHeal";
 import { useDeferredStartup } from "@/shared/hooks/useDeferredStartup";
 import { useWebviewScrollBoundaryLock } from "@/shared/hooks/useWebviewScrollBoundaryLock";
 import { joinChannel } from "@/shared/api/tauri";
+import { addChannelMembers } from "@/shared/api/tauri";
 import type { Channel, ChannelVisibility, SearchHit } from "@/shared/api/types";
+import {
+  createOrcaChatChannelName,
+  encodeOrcaChatDescription,
+  type OrcaChatConfig,
+} from "@/features/chats/chatChannel";
 import { ChannelNavigationProvider } from "@/shared/context/ChannelNavigationContext";
 import { useAppDeepLinks } from "@/shared/useAppDeepLinks";
 import { SidebarProvider } from "@/shared/ui/sidebar";
@@ -587,6 +593,29 @@ export function AppShell() {
     },
     [applyAgents, applyCanvas, createForumMutation, goChannel],
   );
+  const handleCreateChat = React.useCallback(
+    async (config: OrcaChatConfig) => {
+      const createdChat = await createChannelMutation.mutateAsync({
+        name: createOrcaChatChannelName(),
+        description: encodeOrcaChatDescription(config),
+        channelType: "stream",
+        visibility: "private",
+      });
+      const membership = await addChannelMembers({
+        channelId: createdChat.id,
+        pubkeys: [config.agentPubkey],
+        role: "bot",
+      });
+      if (membership.added.length !== 1) {
+        throw new Error(
+          membership.errors[0]?.error ?? "Could not add Buzz Orca Agent.",
+        );
+      }
+      await queryClient.invalidateQueries({ queryKey: channelsQueryKey });
+      await goChannel(createdChat.id);
+    },
+    [createChannelMutation, goChannel, queryClient],
+  );
 
   // The channel browser can create either a stream or a forum depending on
   // which section opened it. Route to the matching handler.
@@ -851,6 +880,7 @@ export function AppShell() {
                         selfPresenceStatus={presenceSession.currentStatus}
                         communities={communitiesHook.communities}
                         onCreateChannel={handleCreateChannel}
+                        onCreateChat={handleCreateChat}
                         onCreateForum={handleCreateForum}
                         onHideDm={handleHideDm}
                         onHuddleEnded={handleHuddleEnded}

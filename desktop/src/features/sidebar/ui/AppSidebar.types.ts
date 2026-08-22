@@ -1,5 +1,6 @@
 export type CollapsibleSidebarGroup =
   | "starred"
+  | "chats"
   | "channels"
   | "forums"
   | "directMessages";

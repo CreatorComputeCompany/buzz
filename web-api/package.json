@@ -1,0 +1,21 @@
+{
+  "name": "@buzz/web-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "node --import ../desktop/test-loader.mjs --experimental-strip-types --test \"src/**/*.test.mjs\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-auth": "^1.7.1",
+    "nostr-tools": "^2.23.12",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/pg": "^8.23.1",
+    "typescript": "~6.0.0"
+  }
+}

@@ -294,7 +294,7 @@ test("sends a message through the real relay", async ({ page }) => {
   await expectTimelineToContain(page, message);
 });
 
-test("delivers a message to a second browser context in real time", async ({
+test("delivers messages both ways between two browser identities", async ({
   browser,
 }: {
   browser: Browser;
@@ -304,7 +304,8 @@ test("delivers a message to a second browser context in real time", async ({
   const contextTwo = await browser.newContext();
   const pageOne = await contextOne.newPage();
   const pageTwo = await contextTwo.newPage();
-  const message = `Realtime message ${Date.now()}`;
+  const tylerMessage = `Realtime message from Tyler ${Date.now()}`;
+  const aliceMessage = `Realtime reply from Alice ${Date.now()}`;
 
   try {
     await installRelayBridge(pageOne, "tyler");
@@ -314,10 +315,16 @@ test("delivers a message to a second browser context in real time", async ({
     await pageTwo.goto("/");
     await createAndJoinSharedStream(pageOne, pageTwo, channelName);
 
-    await pageOne.getByTestId("message-input").fill(message);
+    await pageOne.getByTestId("message-input").fill(tylerMessage);
     await pageOne.getByTestId("send-message").click();
+    await expectTimelineToContain(pageTwo, tylerMessage);
 
-    await expectTimelineToContain(pageTwo, message);
+    await pageTwo.getByTestId("message-input").fill(aliceMessage);
+    await pageTwo.getByTestId("send-message").click();
+
+    await expectTimelineToContain(pageOne, aliceMessage);
+    await expectTimelineToContain(pageOne, tylerMessage);
+    await expectTimelineToContain(pageTwo, aliceMessage);
   } finally {
     await contextOne.close();
     await contextTwo.close();

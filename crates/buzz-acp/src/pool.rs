@@ -37,8 +37,8 @@ use crate::acp::{
 use crate::config::{compose_session_title, DedupMode, PermissionMode};
 use crate::observer;
 use crate::queue::{
-    CancelReason, ContextMessage, ConversationContext, FlushBatch, PromptChannelInfo,
-    PromptProfile, PromptProfileLookup, ThreadTags,
+    is_direct_conversation, CancelReason, ContextMessage, ConversationContext, FlushBatch,
+    PromptChannelInfo, PromptProfile, PromptProfileLookup, ThreadTags,
 };
 use crate::relay::{ChannelInfo, RestClient};
 
@@ -952,6 +952,19 @@ const PERMISSION_MODE_TIMEOUT: Duration = Duration::from_secs(5);
 /// event carries no `name` tag. Not a real channel name — consumers that need
 /// an identifying name must treat it as absent.
 const UNKNOWN_CHANNEL_NAME: &str = "unknown";
+const ORCA_CHAT_DESCRIPTION_PREFIX: &str = "buzz-orca-chat:v1:";
+
+pub(crate) fn agent_chat_runtime_config(info: &PromptChannelInfo) -> Option<serde_json::Value> {
+    let description = info.description.as_deref()?;
+    let raw = description.strip_prefix(ORCA_CHAT_DESCRIPTION_PREFIX)?;
+    let config: serde_json::Value = serde_json::from_str(raw).ok()?;
+    Some(serde_json::json!({
+        "baseRef": config.get("baseRef").cloned().unwrap_or(serde_json::Value::Null),
+        "provider": config.get("provider")?,
+        "model": config.get("model").cloned().unwrap_or(serde_json::Value::Null),
+        "repositorySelector": config.get("repositorySelector")?,
+    }))
+}
 
 /// Channel-derived inputs for a new session — `(is_dm, title_channel)` — from
 /// **one** metadata resolve.
@@ -982,13 +995,24 @@ const UNKNOWN_CHANNEL_NAME: &str = "unknown";
 async fn resolve_new_session_channel_context(
     channel_info: &ChannelInfoResolver,
     channel_id: Uuid,
-) -> (bool, Option<String>, Option<String>) {
+) -> (
+    bool,
+    Option<String>,
+    Option<String>,
+    Option<serde_json::Value>,
+) {
     let Some(info) = channel_info.resolve(channel_id).await else {
-        return (true, None, None);
+        return (true, None, None, None);
     };
-    let is_dm = info.channel_type == "dm";
+    let runtime_config = agent_chat_runtime_config(&info);
+    let is_dm = is_direct_conversation(&info);
     let title_channel = (!is_dm && info.name != UNKNOWN_CHANNEL_NAME).then_some(info.name);
-    (is_dm, title_channel, Some(info.channel_type))
+    (
+        is_dm,
+        title_channel,
+        Some(info.channel_type),
+        runtime_config,
+    )
 }
 
 /// Create a new ACP session via `session_new_full()`, populate model capabilities
@@ -1003,6 +1027,7 @@ struct NewSessionChannelContext<'a> {
     name: Option<&'a str>,
     id: Option<Uuid>,
     channel_type: Option<&'a str>,
+    runtime_config: Option<&'a serde_json::Value>,
 }
 
 async fn create_session_and_apply_model(
@@ -1042,10 +1067,11 @@ async fn create_session_and_apply_model(
         channel.channel_type,
         ctx.session_title.as_deref(),
     );
+    let conversation_key = channel.id.map(|channel_id| channel_id.to_string());
 
     let resp = agent
         .acp
-        .session_new_full(
+        .session_new_full_for_conversation_config(
             &ctx.cwd,
             mcp_servers,
             session_new_system_prompt(
@@ -1055,6 +1081,8 @@ async fn create_session_and_apply_model(
                 combined_system_prompt.as_deref(),
             ),
             session_title.as_deref(),
+            conversation_key.as_deref(),
+            channel.runtime_config,
         )
         .await?;
 
@@ -1936,14 +1964,25 @@ pub async fn run_prompt_task(
     // canvas DM check uses — see `resolve_new_session_channel_context`.
     let mut title_channel: Option<String> = None;
     let mut origin_channel_type: Option<String> = None;
+    let mut runtime_config: Option<serde_json::Value> = None;
     if let PromptSource::Channel(cid) = &source {
         let is_new_channel_session = !agent.state.sessions.contains_key(cid);
         let needs_canvas = is_new_channel_session && !agent.state.canvas_sections.contains_key(cid);
         if is_new_channel_session {
-            let (is_dm, resolved_channel, resolved_channel_type) =
+            let (is_dm, resolved_channel, resolved_channel_type, resolved_runtime_config) =
                 resolve_new_session_channel_context(&ctx.channel_info, *cid).await;
             title_channel = resolved_channel;
             origin_channel_type = resolved_channel_type;
+            runtime_config = resolved_runtime_config;
+            if let Some(author) = batch
+                .as_ref()
+                .and_then(|queued| queued.events.first())
+                .map(|event| event.event.pubkey.to_hex())
+            {
+                let config = runtime_config.get_or_insert_with(|| serde_json::json!({}));
+                config["ownerMemberKey"] =
+                    serde_json::Value::String(format!("buzz-{}", &author[..author.len().min(48)]));
+            }
             if let Some(owner) = ctx.agent_owner_pubkey.as_ref() {
                 huddle_instructions =
                     fetch_huddle_instructions(*cid, owner, &ctx.rest_client).await;
@@ -1996,6 +2035,7 @@ pub async fn run_prompt_task(
                         name: title_channel.as_deref(),
                         id: Some(*cid),
                         channel_type: origin_channel_type.as_deref(),
+                        runtime_config: runtime_config.as_ref(),
                     },
                 )
                 .await
@@ -2061,6 +2101,7 @@ pub async fn run_prompt_task(
                         name: None,
                         id: None,
                         channel_type: None,
+                        runtime_config: None,
                     },
                 )
                 .await
@@ -3313,7 +3354,7 @@ async fn fetch_conversation_context(
     let limit = ctx.context_message_limit;
     let is_dm = channel_info
         .as_ref()
-        .map(|ci| ci.channel_type == "dm")
+        .map(is_direct_conversation)
         .unwrap_or(false);
 
     // Check thread tags on the last event first — this applies to both
@@ -8388,14 +8429,15 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let response = channel_metadata_response(id, &[["name", "buzz-dev"], ["t", "stream"]]);
         let (resolver, requests, server) = counting_resolver(response).await;
 
-        let (is_dm, title_channel, channel_type) =
+        let (is_dm, title_channel, channel_type, runtime_config) =
             resolve_new_session_channel_context(&resolver, id).await;
         assert!(!is_dm, "a stream channel is not a DM");
         assert_eq!(title_channel.as_deref(), Some("buzz-dev"));
         assert_eq!(channel_type.as_deref(), Some("stream"));
+        assert_eq!(runtime_config, None);
         assert_eq!(requests.load(Ordering::SeqCst), 1);
 
-        let (_, again, _) = resolve_new_session_channel_context(&resolver, id).await;
+        let (_, again, _, _) = resolve_new_session_channel_context(&resolver, id).await;
         assert_eq!(again.as_deref(), Some("buzz-dev"));
         assert_eq!(
             requests.load(Ordering::SeqCst),
@@ -8425,6 +8467,37 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         server.abort();
     }
 
+    #[tokio::test]
+    async fn test_new_session_channel_context_extracts_orca_chat_runtime() {
+        let id = Uuid::new_v4();
+        let description = r#"buzz-orca-chat:v1:{"baseRef":"main","provider":"codex","model":"gpt-5.2-codex","repositorySelector":"id:repo-1"}"#;
+        let response = channel_metadata_response(
+            id,
+            &[
+                ["name", "orca-chat-test"],
+                ["t", "stream"],
+                ["about", description],
+            ],
+        );
+        let (resolver, _requests, server) = counting_resolver(response).await;
+
+        let (is_direct, title, channel_type, runtime) =
+            resolve_new_session_channel_context(&resolver, id).await;
+        assert!(is_direct);
+        assert_eq!(title, None);
+        assert_eq!(channel_type.as_deref(), Some("stream"));
+        assert_eq!(
+            runtime,
+            Some(json!({
+                "baseRef": "main",
+                "provider": "codex",
+                "model": "gpt-5.2-codex",
+                "repositorySelector": "id:repo-1",
+            }))
+        );
+        server.abort();
+    }
+
     /// A metadata event with no `about` tag yields no description.
     #[tokio::test]
     async fn test_channel_resolver_absent_description_when_no_about_tag() {
@@ -8445,10 +8518,11 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let response = channel_metadata_response(id, &[["name", "DM"], ["t", "dm"]]);
         let (resolver, _requests, server) = counting_resolver(response).await;
 
-        let (is_dm, title_channel, channel_type) =
+        let (is_dm, title_channel, channel_type, runtime_config) =
             resolve_new_session_channel_context(&resolver, id).await;
         assert!(is_dm);
         assert_eq!(channel_type.as_deref(), Some("dm"));
+        assert_eq!(runtime_config, None);
         assert_eq!(
             title_channel, None,
             "a DM name must never reach the session title"
@@ -8465,7 +8539,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let response = channel_metadata_response(id, &[["t", "stream"]]);
         let (resolver, _requests, server) = counting_resolver(response).await;
 
-        let (is_dm, title_channel, _) = resolve_new_session_channel_context(&resolver, id).await;
+        let (is_dm, title_channel, _, _) = resolve_new_session_channel_context(&resolver, id).await;
         assert!(!is_dm, "a nameless stream channel is still not a DM");
         assert_eq!(
             title_channel, None,
@@ -8485,11 +8559,12 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
 
         let (resolver, requests, server) = counting_resolver(json!([])).await;
 
-        let (is_dm, title_channel, channel_type) =
+        let (is_dm, title_channel, channel_type, runtime_config) =
             resolve_new_session_channel_context(&resolver, Uuid::new_v4()).await;
         assert!(is_dm, "an undeterminable channel type must fail closed");
         assert_eq!(title_channel, None, "unresolved channels get a bare title");
         assert_eq!(channel_type, None);
+        assert_eq!(runtime_config, None);
         assert_eq!(
             requests.load(Ordering::SeqCst),
             2,
@@ -8587,6 +8662,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -8624,6 +8700,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -8658,6 +8735,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -8691,6 +8769,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -8731,6 +8810,7 @@ exit 0"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -8858,6 +8938,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -8929,6 +9010,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -8984,6 +9066,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -9026,6 +9109,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -9067,6 +9151,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -9133,6 +9218,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -9170,6 +9256,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -9243,6 +9330,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await
@@ -9284,6 +9372,7 @@ done"#
                 name: None,
                 id: None,
                 channel_type: None,
+                runtime_config: None,
             },
         )
         .await

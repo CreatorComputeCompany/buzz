@@ -31,6 +31,37 @@ const E2E_DEFAULT_PUBKEY = "deadbeef".repeat(8);
 const E2E_COMMUNITY_ID = "e2e-default-community";
 const ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX = "buzz-onboarding-complete.v1:";
 const DEV_STATE_RESET_PARAM = "resetDevState";
+const WEB_PREVIEW_MODE = "web-preview";
+const WEB_RELAY_PREVIEW_MODE = "web-relay-preview";
+const WEB_CLIENT_MODE = "web-client";
+
+type WebSession = {
+  pubkey: string;
+  username: string;
+  relayHttpUrl: string;
+  relayWsUrl: string;
+  signerUrl: string;
+};
+
+function requireLoopbackRelayUrl(value: string | undefined): URL {
+  if (!value) {
+    throw new Error(
+      "VITE_BUZZ_RELAY_URL is required for the web relay preview build.",
+    );
+  }
+
+  const relayUrl = new URL(value);
+  if (
+    relayUrl.protocol !== "ws:" ||
+    (relayUrl.hostname !== "localhost" && relayUrl.hostname !== "127.0.0.1")
+  ) {
+    throw new Error(
+      "The web relay preview accepts only a local ws:// relay. Hosted identity and auth are not implemented yet.",
+    );
+  }
+
+  return relayUrl;
+}
 
 function resetDevWebviewStateFromUrl() {
   if (!import.meta.env.DEV) {
@@ -51,31 +82,93 @@ function resetDevWebviewStateFromUrl() {
   window.history.replaceState(window.history.state, "", url);
 }
 
-function configureDevE2eBridgeFromUrl() {
-  if (!import.meta.env.DEV) {
-    return;
+async function configureBrowserBridge() {
+  const isWebPreview = import.meta.env.MODE === WEB_PREVIEW_MODE;
+  const isWebRelayPreview = import.meta.env.MODE === WEB_RELAY_PREVIEW_MODE;
+  const isWebClient = import.meta.env.MODE === WEB_CLIENT_MODE;
+  if (isWebClient) {
+    const response = await fetch("/api/buzz/session", {
+      credentials: "include",
+    });
+    if (response.status === 401) return false;
+    if (!response.ok)
+      throw new Error((await response.text()) || "Unable to start Buzz");
+    const session = (await response.json()) as WebSession;
+    const e2eWindow = window as E2eWindow;
+    e2eWindow.__BUZZ_E2E__ = {
+      identity: {
+        pubkey: session.pubkey,
+        signerUrl: session.signerUrl,
+        username: session.username,
+      },
+      mode: "relay",
+      relayHttpUrl: session.relayHttpUrl,
+      relayWsUrl: session.relayWsUrl,
+    };
+    const community = {
+      addedAt: new Date().toISOString(),
+      id: E2E_COMMUNITY_ID,
+      name: "Buzz",
+      pubkey: session.pubkey,
+      relayUrl: session.relayWsUrl,
+    };
+    window.localStorage.setItem(
+      "buzz-communities",
+      JSON.stringify([community]),
+    );
+    window.localStorage.setItem("buzz-active-community-id", E2E_COMMUNITY_ID);
+    window.localStorage.setItem(
+      `${ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX}${session.pubkey}`,
+      "true",
+    );
+    return true;
+  }
+
+  if (!import.meta.env.DEV && !isWebPreview && !isWebRelayPreview) {
+    return true;
   }
 
   const url = new URL(window.location.href);
-  if (url.searchParams.get("e2e") !== "mock") {
-    return;
+  if (
+    !isWebPreview &&
+    !isWebRelayPreview &&
+    url.searchParams.get("e2e") !== "mock"
+  ) {
+    return true;
   }
 
   const e2eWindow = window as E2eWindow;
-  e2eWindow.__BUZZ_E2E__ ??= { mode: "mock" };
+  const relayUrl = isWebRelayPreview
+    ? requireLoopbackRelayUrl(import.meta.env.VITE_BUZZ_RELAY_URL)
+    : null;
+  const relayIdentity = relayUrl
+    ? (
+        await import("@/testing/webRelayPreviewIdentity")
+      ).selectWebRelayPreviewIdentity(url.searchParams)
+    : null;
+  e2eWindow.__BUZZ_E2E__ ??= relayUrl
+    ? {
+        identity: relayIdentity ?? undefined,
+        mode: "relay",
+        relayHttpUrl: relayUrl.href.replace(/^ws:/, "http:").replace(/\/$/, ""),
+        relayWsUrl: relayUrl.href.replace(/\/$/, ""),
+      }
+    : { mode: "mock" };
 
   const community = {
     addedAt: new Date().toISOString(),
     id: E2E_COMMUNITY_ID,
-    name: "E2E Test",
-    relayUrl: "ws://localhost:3000",
+    name: relayUrl ? "Local Buzz" : "E2E Test",
+    pubkey: relayIdentity?.pubkey ?? E2E_DEFAULT_PUBKEY,
+    relayUrl: relayUrl?.href.replace(/\/$/, "") ?? "ws://localhost:3000",
   };
   window.localStorage.setItem("buzz-communities", JSON.stringify([community]));
   window.localStorage.setItem("buzz-active-community-id", E2E_COMMUNITY_ID);
   window.localStorage.setItem(
-    `${ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX}${E2E_DEFAULT_PUBKEY}`,
+    `${ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX}${relayIdentity?.pubkey ?? E2E_DEFAULT_PUBKEY}`,
     "true",
   );
+  return true;
 }
 
 function renderApp() {
@@ -112,7 +205,13 @@ async function installE2eBridgeIfConfigured() {
   // The mock bridge is compiled only into dev and explicit E2E builds. A
   // pre-bootstrap global alone must never activate mock IPC in production.
   if (
-    !(import.meta.env.DEV || import.meta.env.MODE === "e2e") ||
+    !(
+      import.meta.env.DEV ||
+      import.meta.env.MODE === "e2e" ||
+      import.meta.env.MODE === WEB_PREVIEW_MODE ||
+      import.meta.env.MODE === WEB_RELAY_PREVIEW_MODE ||
+      import.meta.env.MODE === WEB_CLIENT_MODE
+    ) ||
     !(window as E2eWindow).__BUZZ_E2E__
   ) {
     return;
@@ -124,7 +223,14 @@ async function installE2eBridgeIfConfigured() {
 
 async function bootstrap() {
   resetDevWebviewStateFromUrl();
-  configureDevE2eBridgeFromUrl();
+  const authenticated = await configureBrowserBridge();
+  if (!authenticated) {
+    const { WebAuthGate } = await import("@/features/web-auth/WebAuthGate");
+    ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+      <WebAuthGate />,
+    );
+    return;
+  }
   recoverLocalStorageQuotaOnStartup();
   initializeConversationDensityPreference();
   initializeFontSizePreference();

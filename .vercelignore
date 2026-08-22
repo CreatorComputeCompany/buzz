@@ -1,0 +1,17 @@
+.git
+.hermit
+node_modules
+**/node_modules
+**/dist
+**/target
+**/test-results
+**/playwright-report
+target
+crates
+benchmarks
+bin
+admin-web
+web
+web-api
+deploy
+docs

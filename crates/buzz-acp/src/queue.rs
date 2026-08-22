@@ -873,6 +873,16 @@ pub struct ThreadTags {
     pub mentioned_pubkeys: Vec<String>,
 }
 
+const ORCA_CHAT_DESCRIPTION_PREFIX: &str = "buzz-orca-chat:v1:";
+
+pub fn is_direct_conversation(info: &PromptChannelInfo) -> bool {
+    info.channel_type == "dm"
+        || info
+            .description
+            .as_deref()
+            .is_some_and(|description| description.starts_with(ORCA_CHAT_DESCRIPTION_PREFIX))
+}
+
 /// Parse NIP-10 thread tags from a Nostr event.
 ///
 /// Detection logic (per research doc §4c):
@@ -1580,7 +1590,7 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
     let thread_tags = parse_thread_tags(&last_event.event);
     let is_dm = args
         .channel_info
-        .map(|ci| ci.channel_type == "dm")
+        .map(is_direct_conversation)
         .unwrap_or(false);
 
     let mut sections: Vec<String> = Vec::with_capacity(7);
