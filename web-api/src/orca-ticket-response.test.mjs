@@ -6,6 +6,7 @@ test("turns a member-scoped ticket into embedded Orca auth", () => {
   assert.deepEqual(
     toOrcaRuntimeResponse({
       pairingUrl: "orca://pair?code=ticket",
+      authPairingUrl: "orca://pair?code=member-browser",
       worktreeId: "worktree-1",
       email: "new@example.com",
       member: { key: "member-new", displayName: "New User" },
@@ -14,7 +15,7 @@ test("turns a member-scoped ticket into embedded Orca auth", () => {
       pairingUrl: "orca://pair?code=ticket",
       worktreeId: "worktree-1",
       orcaAuth: {
-        pairingUrl: "orca://pair?code=ticket",
+        pairingUrl: "orca://pair?code=member-browser",
         email: "new@example.com",
         member: {
           key: "member-new",

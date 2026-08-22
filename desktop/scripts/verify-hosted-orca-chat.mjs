@@ -99,12 +99,21 @@ async function remoteTerminalMarkerPresent(timeoutMs) {
 
 const browser = await chromium.launch({ headless: true });
 let page;
+const browserDiagnostics = [];
 let allowlistExtended = false;
 let runtimeUsersExtended = false;
 try {
   page = await browser.newPage(
     testMobile ? { viewport: { width: 390, height: 844 } } : undefined,
   );
+  page.on("console", (message) => {
+    if (["error", "warning"].includes(message.type())) {
+      browserDiagnostics.push(`[console.${message.type()}] ${message.text()}`);
+    }
+  });
+  page.on("pageerror", (error) => {
+    browserDiagnostics.push(`[pageerror] ${error.stack ?? error.message}`);
+  });
   await page.goto(baseUrl);
   await page.getByRole("button", { name: "Create an account" }).click();
   await page.getByLabel("Name").fill(`Orca Chat User ${runId}`);
@@ -312,6 +321,9 @@ try {
       fullPage: true,
     });
     console.error((await page.locator("body").innerText()).slice(-4_000));
+    if (browserDiagnostics.length > 0) {
+      console.error(browserDiagnostics.slice(-100).join("\n"));
+    }
   }
   throw error;
 } finally {

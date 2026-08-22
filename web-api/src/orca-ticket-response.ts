@@ -1,5 +1,6 @@
 export type OrcaRuntimeTicket = {
   pairingUrl: string;
+  authPairingUrl?: string;
   worktreeId?: string;
   email?: string;
   member?: {
@@ -15,6 +16,7 @@ export function toOrcaRuntimeResponse(ticket: OrcaRuntimeTicket) {
     ...(ticket.worktreeId ? { worktreeId: ticket.worktreeId } : {}),
   };
   if (
+    typeof ticket.authPairingUrl !== "string" ||
     typeof ticket.email !== "string" ||
     typeof ticket.member?.key !== "string" ||
     typeof ticket.member.displayName !== "string"
@@ -24,7 +26,7 @@ export function toOrcaRuntimeResponse(ticket: OrcaRuntimeTicket) {
   return {
     ...response,
     orcaAuth: {
-      pairingUrl: ticket.pairingUrl,
+      pairingUrl: ticket.authPairingUrl,
       email: ticket.email,
       member: {
         key: ticket.member.key,
