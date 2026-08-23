@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   authorizeOrcaChatBridge,
+  parseOrcaChatCommandResponse,
   parseOrcaChatChannel,
   parseOrcaChatProfile,
+  parseOrcaChatRelayMemberPubkeys,
 } from "./orca-chat-shapes.ts";
 
 function event(overrides = {}) {
@@ -59,12 +61,50 @@ test("uses profile display names with a pubkey fallback", () => {
     {
       pubkey: "b".repeat(64),
       displayName: "Bob",
+      avatarUrl: null,
     },
   );
   assert.equal(
     parseOrcaChatProfile(event({ content: "invalid" })).displayName,
     "bbbbbbbbbb",
   );
+  assert.equal(
+    parseOrcaChatProfile(
+      event({ content: '{"picture":"https://example.com/bob.png"}' }),
+    ).avatarUrl,
+    "https://example.com/bob.png",
+  );
+  assert.equal(
+    parseOrcaChatProfile(event({ content: '{"picture":"not a URL"}' }))
+      .avatarUrl,
+    null,
+  );
+});
+
+test("parses the existing Buzz relay member directory", () => {
+  assert.deepEqual(
+    parseOrcaChatRelayMemberPubkeys(
+      event({
+        tags: [
+          ["member", "d".repeat(64), "member"],
+          ["p", "e".repeat(64), "", "admin"],
+          ["member", "invalid"],
+          ["member", "d".repeat(64), "member"],
+        ],
+      }),
+    ),
+    ["d".repeat(64), "e".repeat(64)],
+  );
+});
+
+test("parses Buzz command acknowledgements", () => {
+  assert.deepEqual(
+    parseOrcaChatCommandResponse(
+      'response:{"channel_id":"552a0297-7a76-4f2d-a2d5-d0d8e99a652a"}',
+    ),
+    { channel_id: "552a0297-7a76-4f2d-a2d5-d0d8e99a652a" },
+  );
+  assert.throws(() => parseOrcaChatCommandResponse("not json"));
 });
 
 test("bridge authorization is constant-time and fails closed", () => {

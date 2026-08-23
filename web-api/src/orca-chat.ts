@@ -10,10 +10,13 @@ import {
 } from "./identity.js";
 import {
   isOrcaChatChannelId,
+  parseOrcaChatCommandResponse,
   parseOrcaChatChannel,
   parseOrcaChatProfile,
+  parseOrcaChatRelayMemberPubkeys,
   validOrcaChatActor,
   type OrcaChatChannel,
+  type OrcaChatMember,
   type OrcaChatProfile,
 } from "./orca-chat-shapes.js";
 
@@ -26,6 +29,7 @@ export type OrcaChatBootstrap = {
   pubkey: string;
   channels: OrcaChatChannel[];
   profiles: OrcaChatProfile[];
+  members: OrcaChatMember[];
 };
 
 export type OrcaChatHistory = {
@@ -120,16 +124,100 @@ async function profilesFor(pubkeys: string[], identity: StoredIdentity) {
   return events.map(parseOrcaChatProfile);
 }
 
+async function relayMemberPubkeys(identity: StoredIdentity): Promise<string[]> {
+  const events = await relayPost<Event[]>(identity, "/query", [
+    { kinds: [13534], limit: 1 },
+  ]);
+  return parseOrcaChatRelayMemberPubkeys(events[0]);
+}
+
+async function memberDirectory(
+  identity: StoredIdentity,
+): Promise<OrcaChatMember[]> {
+  const pubkeys = await relayMemberPubkeys(identity);
+  const profiles = await profilesFor(pubkeys, identity);
+  const profilesByPubkey = new Map(
+    profiles.map((profile) => [profile.pubkey.toLowerCase(), profile]),
+  );
+  return pubkeys.map(
+    (pubkey) =>
+      profilesByPubkey.get(pubkey) ?? {
+        pubkey,
+        displayName: pubkey.slice(0, 10),
+        avatarUrl: null,
+      },
+  );
+}
+
 export async function bootstrapOrcaChat(
   actorValue: unknown,
 ): Promise<OrcaChatBootstrap> {
   const identity = await identityForActor(actorValue);
-  const { channels } = await memberChannels(identity);
-  const profiles = await profilesFor(
-    channels.flatMap((channel) => channel.participantPubkeys),
+  const [{ channels }, members] = await Promise.all([
+    memberChannels(identity),
+    memberDirectory(identity),
+  ]);
+  return { pubkey: identity.pubkey, channels, profiles: members, members };
+}
+
+export async function openOrcaChatDm(
+  actorValue: unknown,
+  participantPubkeysValue: unknown,
+): Promise<OrcaChatChannel> {
+  if (
+    !Array.isArray(participantPubkeysValue) ||
+    participantPubkeysValue.length < 1 ||
+    participantPubkeysValue.length > 8
+  ) {
+    throw new Error("invalid_participants");
+  }
+  const participantPubkeys = [
+    ...new Set(
+      participantPubkeysValue.map((value) =>
+        typeof value === "string" ? value.toLowerCase() : "",
+      ),
+    ),
+  ];
+  if (participantPubkeys.some((pubkey) => !/^[0-9a-f]{64}$/.test(pubkey))) {
+    throw new Error("invalid_participants");
+  }
+
+  const identity = await identityForActor(actorValue);
+  if (participantPubkeys.includes(identity.pubkey.toLowerCase())) {
+    throw new Error("invalid_participants");
+  }
+  const relayMembers = new Set(await relayMemberPubkeys(identity));
+  if (participantPubkeys.some((pubkey) => !relayMembers.has(pubkey))) {
+    throw new Error("invalid_participants");
+  }
+
+  const event = signTemplate(identity, {
+    kind: 41010,
+    content: "",
+    tags: participantPubkeys.map((pubkey) => ["p", pubkey]),
+  });
+  const acknowledgement = await relayPost<{ message?: unknown }>(
     identity,
+    "/events",
+    event,
   );
-  return { pubkey: identity.pubkey, channels, profiles };
+  const response = parseOrcaChatCommandResponse(acknowledgement.message);
+  const channelId = response.channel_id;
+  if (!isOrcaChatChannelId(channelId)) {
+    throw new Error("invalid_relay_response");
+  }
+
+  const metadata = await relayPost<Event[]>(identity, "/query", [
+    { kinds: [39000], "#d": [channelId], limit: 1 },
+  ]);
+  const channel = metadata[0] ? parseOrcaChatChannel(metadata[0]) : null;
+  if (!channel) throw new Error("dm_metadata_unavailable");
+  return {
+    ...channel,
+    type: "dm",
+    visibility: "private",
+    participantPubkeys: [identity.pubkey.toLowerCase(), ...participantPubkeys],
+  };
 }
 
 export async function getOrcaChatHistory(

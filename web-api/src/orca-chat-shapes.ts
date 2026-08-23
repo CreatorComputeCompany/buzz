@@ -25,7 +25,10 @@ export type OrcaChatChannel = {
 export type OrcaChatProfile = {
   pubkey: string;
   displayName: string;
+  avatarUrl: string | null;
 };
+
+export type OrcaChatMember = OrcaChatProfile;
 
 function tagValue(tags: RelayTag[], name: string): string | null {
   return tags.find((tag) => tag[0] === name)?.[1] ?? null;
@@ -69,7 +72,54 @@ export function parseOrcaChatProfile(event: Event): OrcaChatProfile {
     (typeof content.display_name === "string" && content.display_name.trim()) ||
     (typeof content.name === "string" && content.name.trim()) ||
     event.pubkey.slice(0, 10);
-  return { pubkey: event.pubkey, displayName };
+  let avatarUrl: string | null = null;
+  if (typeof content.picture === "string") {
+    try {
+      const parsed = new URL(content.picture.trim());
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        avatarUrl = parsed.toString();
+      }
+    } catch {
+      // Invalid optional avatar URLs should not break the member directory.
+    }
+  }
+  return { pubkey: event.pubkey, displayName, avatarUrl };
+}
+
+export function parseOrcaChatRelayMemberPubkeys(
+  event: Event | undefined,
+): string[] {
+  if (!event) return [];
+  const tags = event.tags as RelayTag[];
+  return [
+    ...new Set(
+      tags.flatMap((tag) => {
+        const pubkey =
+          tag[0] === "member" ? tag[1] : tag[0] === "p" ? tag[1] : undefined;
+        return pubkey && /^[0-9a-f]{64}$/i.test(pubkey)
+          ? [pubkey.toLowerCase()]
+          : [];
+      }),
+    ),
+  ];
+}
+
+export function parseOrcaChatCommandResponse(
+  message: unknown,
+): Record<string, unknown> {
+  if (typeof message !== "string") throw new Error("invalid_relay_response");
+  const payload = message.startsWith("response:")
+    ? message.slice("response:".length)
+    : message;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("invalid_relay_response");
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw new Error("invalid_relay_response");
+  }
 }
 
 export function validOrcaChatActor(value: unknown): OrcaChatActor {

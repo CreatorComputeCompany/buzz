@@ -16,6 +16,7 @@ import {
 import {
   bootstrapOrcaChat,
   getOrcaChatHistory,
+  openOrcaChatDm,
   sendOrcaChatMessage,
 } from "./orca-chat.js";
 import { authorizeOrcaChatBridge } from "./orca-chat-shapes.js";
@@ -111,13 +112,15 @@ async function route(request: Request): Promise<Response> {
           ? await bootstrapOrcaChat(body.actor)
           : url.pathname === "/api/internal/orca-chat/history"
             ? await getOrcaChatHistory(body.actor, body.channelId)
-            : url.pathname === "/api/internal/orca-chat/send"
-              ? await sendOrcaChatMessage(
-                  body.actor,
-                  body.channelId,
-                  body.content,
-                )
-              : null;
+            : url.pathname === "/api/internal/orca-chat/open-dm"
+              ? await openOrcaChatDm(body.actor, body.participantPubkeys)
+              : url.pathname === "/api/internal/orca-chat/send"
+                ? await sendOrcaChatMessage(
+                    body.actor,
+                    body.channelId,
+                    body.content,
+                  )
+                : null;
       return result
         ? Response.json(result, { headers: { "Cache-Control": "no-store" } })
         : Response.json({ error: "not_found" }, { status: 404 });
