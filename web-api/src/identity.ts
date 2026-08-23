@@ -10,7 +10,7 @@ import { pool } from "./auth.js";
 const RELAY_HTTP_URL = "https://imabird-buzz-relay.fly.dev";
 export const RELAY_WS_URL = "wss://imabird-buzz-relay.fly.dev";
 
-type StoredIdentity = {
+export type StoredIdentity = {
   pubkey: string;
   encryptedSecret: string;
   relayJoined: boolean;
@@ -138,7 +138,7 @@ function nip98Authorization(
   return `Nostr ${Buffer.from(JSON.stringify(event)).toString("base64")}`;
 }
 
-async function relayPost<T>(
+export async function relayPost<T>(
   identity: StoredIdentity,
   path: string,
   body: unknown,

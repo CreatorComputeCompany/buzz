@@ -13,6 +13,12 @@ import {
   toOrcaRuntimeResponse,
   type OrcaRuntimeTicket,
 } from "./orca-ticket-response.js";
+import {
+  bootstrapOrcaChat,
+  getOrcaChatHistory,
+  sendOrcaChatMessage,
+} from "./orca-chat.js";
+import { authorizeOrcaChatBridge } from "./orca-chat-shapes.js";
 
 const port = Number(process.env.PORT ?? 3000);
 
@@ -90,6 +96,42 @@ async function route(request: Request): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/_liveness") return new Response("ok");
   if (url.pathname.startsWith("/api/auth/")) return auth.handler(request);
+
+  if (url.pathname.startsWith("/api/internal/orca-chat/")) {
+    if (!authorizeOrcaChatBridge(request.headers.get("authorization"))) {
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    }
+    if (request.method !== "POST") {
+      return Response.json({ error: "method_not_allowed" }, { status: 405 });
+    }
+    try {
+      const body = (await request.json()) as Record<string, unknown>;
+      const result =
+        url.pathname === "/api/internal/orca-chat/bootstrap"
+          ? await bootstrapOrcaChat(body.actor)
+          : url.pathname === "/api/internal/orca-chat/history"
+            ? await getOrcaChatHistory(body.actor, body.channelId)
+            : url.pathname === "/api/internal/orca-chat/send"
+              ? await sendOrcaChatMessage(
+                  body.actor,
+                  body.channelId,
+                  body.content,
+                )
+              : null;
+      return result
+        ? Response.json(result, { headers: { "Cache-Control": "no-store" } })
+        : Response.json({ error: "not_found" }, { status: 404 });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "chat_unavailable";
+      const status = message.startsWith("invalid_")
+        ? 400
+        : message === "channel_not_accessible"
+          ? 403
+          : 503;
+      return Response.json({ error: message }, { status });
+    }
+  }
 
   const session = await requireSession(request);
   if (!session) {
