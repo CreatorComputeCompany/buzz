@@ -1,10 +1,12 @@
 # Buzz Orca host
 
-This directory is the source of truth for the two systemd services on
+This directory is the source of truth for the Orca services on
 `buzz-orca-host.boxd`:
 
 - `orca-serve.service` runs the headless Orca runtime and embedded web client.
 - `buzz-orca-agent.service` listens to Buzz and dispatches work to that runtime.
+- `buzz-orca-update.timer` installs the bundle published for the current Orca
+  `main` commit.
 
 Production admits any authenticated Buzz member at the listener and web API
 gates. The runtime ticket binds that member's signed Buzz identity to a member
@@ -39,8 +41,22 @@ systemctl status orca-serve.service buzz-orca-agent.service
 ```
 
 The installer validates the secret-file ownership before replacing either
-unit. It removes the old identity, logging, and lifecycle drop-ins because
-those settings are represented in the complete units.
+runtime unit. It also installs the updater and bundle installer into
+`/usr/local/libexec/buzz-orca`, enables the timer, and removes the old identity,
+logging, and lifecycle drop-ins because those settings are represented in the
+complete units.
+
+The updater uses the existing read-only GitHub CLI login for the `boxd` user.
+It asks GitHub for the exact SHA at `CreatorComputeCompany/orca:main`, accepts
+only the prerelease tagged `buzz-host-<40-character SHA>`, validates its three
+expected assets and manifest, verifies both archive digests, and then invokes
+the local rollback-capable installer. It never follows a generic "latest"
+release and never downloads executable deployment logic from GitHub.
+
+The Orca repository publishes that matched release on every push to `main`.
+The timer checks every two minutes and records a SHA only after installation,
+service recovery, and the public health check all succeed. A release that has
+not finished publishing is retried on the next timer tick.
 
 ## Deploy an Orca application bundle
 

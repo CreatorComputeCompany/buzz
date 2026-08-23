@@ -45,3 +45,28 @@ test("bundle deployment verifies both digests and restores both components", asy
     /systemctl start orca-serve\.service buzz-orca-agent\.service/,
   );
 });
+
+test("host updates follow only the release for the exact current main commit", async () => {
+  const updater = await deploymentFile("update-from-github.sh");
+  const service = await deploymentFile("buzz-orca-update.service");
+  const timer = await deploymentFile("buzz-orca-update.timer");
+  const installer = await deploymentFile("install-services.sh");
+
+  assert.match(updater, /repos\/\$ORCA_REPOSITORY\/commits\/main/);
+  assert.match(updater, /release_tag=\$RELEASE_PREFIX\$main_sha/);
+  assert.match(updater, /\.targetCommitish == \$commit/);
+  assert.match(updater, /\.isDraft == false/);
+  assert.match(updater, /\.isPrerelease == true/);
+  assert.equal((updater.match(/sha256sum --check --status/g) ?? []).length, 2);
+  assert.match(
+    updater,
+    /INSTALLER=\/usr\/local\/libexec\/buzz-orca\/install-bundle\.sh/,
+  );
+  assert.match(updater, /mv -f -- "\$new_state" "\$INSTALLED_SHA_FILE"/);
+  assert.match(service, /^User=root$/m);
+  assert.match(service, /^UMask=0077$/m);
+  assert.match(timer, /^OnUnitActiveSec=2min$/m);
+  assert.match(timer, /^RandomizedDelaySec=20s$/m);
+  assert.match(installer, /buzz-orca-update\.timer/);
+  assert.match(installer, /update-from-github\.sh/);
+});

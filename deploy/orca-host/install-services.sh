@@ -29,6 +29,19 @@ install -o root -g root -m 0644 \
 install -o root -g root -m 0644 \
   "$SCRIPT_DIR/buzz-orca-agent.service" \
   /etc/systemd/system/buzz-orca-agent.service
+install -o root -g root -m 0644 \
+  "$SCRIPT_DIR/buzz-orca-update.service" \
+  /etc/systemd/system/buzz-orca-update.service
+install -o root -g root -m 0644 \
+  "$SCRIPT_DIR/buzz-orca-update.timer" \
+  /etc/systemd/system/buzz-orca-update.timer
+install -d -o root -g root -m 0755 /usr/local/libexec/buzz-orca
+install -o root -g root -m 0755 \
+  "$SCRIPT_DIR/install-bundle.sh" \
+  /usr/local/libexec/buzz-orca/install-bundle.sh
+install -o root -g root -m 0755 \
+  "$SCRIPT_DIR/update-from-github.sh" \
+  /usr/local/libexec/buzz-orca/update-from-github.sh
 
 # Remove production-era drop-ins whose settings now live in the complete unit.
 rm -f \
@@ -37,13 +50,18 @@ rm -f \
   /etc/systemd/system/buzz-orca-agent.service.d/runtime-lifecycle.conf
 
 systemctl daemon-reload
-systemctl enable orca-serve.service buzz-orca-agent.service
+systemctl enable \
+  orca-serve.service \
+  buzz-orca-agent.service \
+  buzz-orca-update.timer
 systemctl restart orca-serve.service
 
 # PartOf= propagates a restart transaction, but an independently inactive agent
 # is intentionally recovered here as well.
 systemctl start buzz-orca-agent.service
+systemctl start buzz-orca-update.timer
 systemctl is-active --quiet orca-serve.service
 systemctl is-active --quiet buzz-orca-agent.service
+systemctl is-active --quiet buzz-orca-update.timer
 
-echo "Orca runtime and Buzz listener are active."
+echo "Orca runtime, Buzz listener, and commit-addressed updater are active."
