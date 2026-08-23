@@ -6,6 +6,7 @@ import {
   ensureRelayProfile,
   RELAY_WS_URL,
   signTemplate,
+  type StoredIdentity,
   validateEventTemplate,
 } from "./identity.js";
 import { isOrcaRuntimeUserAllowed } from "./orca-access.js";
@@ -15,11 +16,16 @@ import {
 } from "./orca-ticket-response.js";
 import {
   bootstrapOrcaChat,
+  createOrcaChatSurface,
   getOrcaChatHistory,
+  identityForOrcaChatActor,
   openOrcaChatDm,
   sendOrcaChatMessage,
 } from "./orca-chat.js";
-import { authorizeOrcaChatBridge } from "./orca-chat-shapes.js";
+import {
+  authorizeOrcaChatBridge,
+  verifyOrcaChatEmbedToken,
+} from "./orca-chat-shapes.js";
 
 const port = Number(process.env.PORT ?? 3000);
 
@@ -110,17 +116,19 @@ async function route(request: Request): Promise<Response> {
       const result =
         url.pathname === "/api/internal/orca-chat/bootstrap"
           ? await bootstrapOrcaChat(body.actor)
-          : url.pathname === "/api/internal/orca-chat/history"
-            ? await getOrcaChatHistory(body.actor, body.channelId)
-            : url.pathname === "/api/internal/orca-chat/open-dm"
-              ? await openOrcaChatDm(body.actor, body.participantPubkeys)
-              : url.pathname === "/api/internal/orca-chat/send"
-                ? await sendOrcaChatMessage(
-                    body.actor,
-                    body.channelId,
-                    body.content,
-                  )
-                : null;
+          : url.pathname === "/api/internal/orca-chat/surface"
+            ? await createOrcaChatSurface(body.actor, body.channelId)
+            : url.pathname === "/api/internal/orca-chat/history"
+              ? await getOrcaChatHistory(body.actor, body.channelId)
+              : url.pathname === "/api/internal/orca-chat/open-dm"
+                ? await openOrcaChatDm(body.actor, body.participantPubkeys)
+                : url.pathname === "/api/internal/orca-chat/send"
+                  ? await sendOrcaChatMessage(
+                      body.actor,
+                      body.channelId,
+                      body.content,
+                    )
+                  : null;
       return result
         ? Response.json(result, { headers: { "Cache-Control": "no-store" } })
         : Response.json({ error: "not_found" }, { status: 404 });
@@ -136,28 +144,48 @@ async function route(request: Request): Promise<Response> {
     }
   }
 
-  const session = await requireSession(request);
-  if (!session) {
+  const embedActor = verifyOrcaChatEmbedToken(
+    request.headers.get("authorization"),
+  );
+  const session = embedActor ? null : await requireSession(request);
+  if (!session && !embedActor) {
     return Response.json({ error: "authentication_required" }, { status: 401 });
   }
 
   if (url.pathname === "/api/buzz/session" && request.method === "GET") {
-    const identity = await ensureIdentity(session.user.id);
-    await ensureRelayMembership(session.user.id, identity);
-    await ensureRelayProfile(identity, session.user.name);
+    let identity: StoredIdentity;
+    let username: string;
+    if (embedActor) {
+      identity = await identityForOrcaChatActor(embedActor);
+      username = embedActor.displayName;
+    } else {
+      if (!session) throw new Error("authentication_required");
+      identity = await ensureIdentity(session.user.id);
+      await ensureRelayMembership(session.user.id, identity);
+      await ensureRelayProfile(identity, session.user.name);
+      username = session.user.name;
+    }
     return Response.json({
       pubkey: identity.pubkey,
-      username: session.user.name,
+      username,
       relayHttpUrl: RELAY_WS_URL.replace(/^wss:/, "https:"),
       relayWsUrl: RELAY_WS_URL,
       signerUrl: "/api/buzz/sign",
+      signerToken: embedActor
+        ? request.headers.get("authorization")?.slice("Bearer ".length)
+        : undefined,
     });
   }
 
   if (url.pathname === "/api/buzz/sign" && request.method === "POST") {
     try {
       const template = validateEventTemplate(await request.json());
-      const identity = await ensureIdentity(session.user.id);
+      const identity = embedActor
+        ? await identityForOrcaChatActor(embedActor)
+        : session
+          ? await ensureIdentity(session.user.id)
+          : null;
+      if (!identity) throw new Error("authentication_required");
       return Response.json(signTemplate(identity, template));
     } catch (error) {
       const message =
@@ -167,6 +195,12 @@ async function route(request: Request): Promise<Response> {
   }
 
   if (url.pathname === "/api/buzz/orca-runtime" && request.method === "GET") {
+    if (!session) {
+      return Response.json(
+        { error: "authentication_required" },
+        { status: 401 },
+      );
+    }
     if (!isOrcaRuntimeUserAllowed(session.user.id)) {
       return Response.json({ error: "orca_access_denied" }, { status: 403 });
     }

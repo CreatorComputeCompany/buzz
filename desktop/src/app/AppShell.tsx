@@ -130,7 +130,11 @@ export function AppShell() {
     showHuddleInMainApp,
     viewHuddleChannel,
   } = useHuddlePresentation();
-  const hasCommunityRail = communitiesHook.communities.length > 1;
+  const isOrcaFocusedConversation =
+    import.meta.env.MODE === "web-client" &&
+    new URL(window.location.href).searchParams.get("orcaFocused") === "1";
+  const hasCommunityRail =
+    !isOrcaFocusedConversation && communitiesHook.communities.length > 1;
   const addCommunityDialog = useAddCommunityDialogState();
   const [isChannelManagementOpen, setIsChannelManagementOpen] =
     React.useState(false);
@@ -719,7 +723,7 @@ export function AppShell() {
   });
   return (
     <PreventSleepProvider>
-      {!isHuddleRoom ? (
+      {!isHuddleRoom && !isOrcaFocusedConversation ? (
         <AppShellTrayMenu
           channels={channels}
           goChannel={goChannel}
@@ -793,7 +797,9 @@ export function AppShell() {
               data-testid="app-sidebar-layer"
             >
               <AppProfilePanelProvider>
-                {!settingsOpen && !isHuddleRoom ? (
+                {!settingsOpen &&
+                !isHuddleRoom &&
+                !isOrcaFocusedConversation ? (
                   <AppTopChrome
                     canGoBack={canGoBack}
                     canGoForward={canGoForward}
@@ -840,7 +846,7 @@ export function AppShell() {
                   </div>
                 ) : (
                   <div className="relative flex min-h-0 flex-1 overflow-visible">
-                    {!isHuddleRoom ? (
+                    {!isHuddleRoom && !isOrcaFocusedConversation ? (
                       <AppSidebar
                         activeCommunity={communitiesHook.activeCommunity}
                         channels={sidebarChannels}

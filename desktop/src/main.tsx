@@ -41,6 +41,7 @@ type WebSession = {
   relayHttpUrl: string;
   relayWsUrl: string;
   signerUrl: string;
+  signerToken?: string;
 };
 
 function requireLoopbackRelayUrl(value: string | undefined): URL {
@@ -87,8 +88,11 @@ async function configureBrowserBridge() {
   const isWebRelayPreview = import.meta.env.MODE === WEB_RELAY_PREVIEW_MODE;
   const isWebClient = import.meta.env.MODE === WEB_CLIENT_MODE;
   if (isWebClient) {
+    const url = new URL(window.location.href);
+    const embedToken = url.searchParams.get("orcaEmbed");
     const response = await fetch("/api/buzz/session", {
       credentials: "include",
+      headers: embedToken ? { Authorization: `Bearer ${embedToken}` } : {},
     });
     if (response.status === 401) return false;
     if (!response.ok)
@@ -99,6 +103,7 @@ async function configureBrowserBridge() {
       identity: {
         pubkey: session.pubkey,
         signerUrl: session.signerUrl,
+        signerToken: session.signerToken,
         username: session.username,
       },
       mode: "relay",
@@ -121,6 +126,10 @@ async function configureBrowserBridge() {
       `${ONBOARDING_COMPLETION_STORAGE_KEY_PREFIX}${session.pubkey}`,
       "true",
     );
+    if (embedToken) {
+      url.searchParams.delete("orcaEmbed");
+      window.history.replaceState(window.history.state, "", url);
+    }
     return true;
   }
 

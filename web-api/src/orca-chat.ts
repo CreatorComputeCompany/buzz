@@ -10,6 +10,7 @@ import {
 } from "./identity.js";
 import {
   isOrcaChatChannelId,
+  mintOrcaChatEmbedToken,
   parseOrcaChatCommandResponse,
   parseOrcaChatChannel,
   parseOrcaChatProfile,
@@ -35,6 +36,10 @@ export type OrcaChatBootstrap = {
 export type OrcaChatHistory = {
   events: Event[];
   profiles: OrcaChatProfile[];
+};
+
+export type OrcaChatSurface = {
+  url: string;
 };
 
 function tagValue(tags: RelayTag[], name: string): string | null {
@@ -97,7 +102,9 @@ async function assertChannelAccess(
   return { channel, isMember: memberChannelIds.has(channelId) };
 }
 
-async function identityForActor(actorValue: unknown): Promise<StoredIdentity> {
+export async function identityForOrcaChatActor(
+  actorValue: unknown,
+): Promise<StoredIdentity> {
   const actor = validOrcaChatActor(actorValue);
   let identityKey = `orca:${actor.controllerId}:${actor.memberKey}`;
   if (actor.email) {
@@ -152,7 +159,7 @@ async function memberDirectory(
 export async function bootstrapOrcaChat(
   actorValue: unknown,
 ): Promise<OrcaChatBootstrap> {
-  const identity = await identityForActor(actorValue);
+  const identity = await identityForOrcaChatActor(actorValue);
   const [{ channels }, members] = await Promise.all([
     memberChannels(identity),
     memberDirectory(identity),
@@ -182,7 +189,7 @@ export async function openOrcaChatDm(
     throw new Error("invalid_participants");
   }
 
-  const identity = await identityForActor(actorValue);
+  const identity = await identityForOrcaChatActor(actorValue);
   if (participantPubkeys.includes(identity.pubkey.toLowerCase())) {
     throw new Error("invalid_participants");
   }
@@ -227,7 +234,7 @@ export async function getOrcaChatHistory(
   if (!isOrcaChatChannelId(channelId)) {
     throw new Error("invalid_channel");
   }
-  const identity = await identityForActor(actorValue);
+  const identity = await identityForOrcaChatActor(actorValue);
   await assertChannelAccess(identity, channelId);
   const events = await relayPost<Event[]>(identity, "/query", [
     { kinds: [9], "#h": [channelId], limit: HISTORY_LIMIT },
@@ -237,6 +244,26 @@ export async function getOrcaChatHistory(
     identity,
   );
   return { events, profiles };
+}
+
+export async function createOrcaChatSurface(
+  actorValue: unknown,
+  channelId: unknown,
+): Promise<OrcaChatSurface> {
+  if (!isOrcaChatChannelId(channelId)) {
+    throw new Error("invalid_channel");
+  }
+  const actor = validOrcaChatActor(actorValue);
+  const identity = await identityForOrcaChatActor(actor);
+  await assertChannelAccess(identity, channelId);
+  const token = mintOrcaChatEmbedToken(actor);
+  const baseUrl = process.env.BETTER_AUTH_URL;
+  if (!baseUrl) throw new Error("user_chat_not_configured");
+  const url = new URL(baseUrl);
+  url.searchParams.set("orcaFocused", "1");
+  url.searchParams.set("orcaEmbed", token);
+  url.hash = `/channels/${encodeURIComponent(channelId)}`;
+  return { url: url.toString() };
 }
 
 export async function sendOrcaChatMessage(
@@ -254,7 +281,7 @@ export async function sendOrcaChatMessage(
   ) {
     throw new Error("invalid_message");
   }
-  const identity = await identityForActor(actorValue);
+  const identity = await identityForOrcaChatActor(actorValue);
   const access = await assertChannelAccess(identity, channelId);
   if (!access.isMember && access.channel.visibility === "open") {
     const joinEvent = signTemplate(identity, {

@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   authorizeOrcaChatBridge,
+  mintOrcaChatEmbedToken,
   parseOrcaChatCommandResponse,
   parseOrcaChatChannel,
   parseOrcaChatProfile,
   parseOrcaChatRelayMemberPubkeys,
+  verifyOrcaChatEmbedToken,
 } from "./orca-chat-shapes.ts";
 
 function event(overrides = {}) {
@@ -112,4 +114,26 @@ test("bridge authorization is constant-time and fails closed", () => {
   assert.equal(authorizeOrcaChatBridge("Bearer nope", "secret"), false);
   assert.equal(authorizeOrcaChatBridge(null, "secret"), false);
   assert.equal(authorizeOrcaChatBridge("Bearer secret", ""), false);
+});
+
+test("mints tamper-evident focused-chat tokens for an Orca member", () => {
+  const previous = process.env.ORCA_CHAT_BRIDGE_SECRET;
+  process.env.ORCA_CHAT_BRIDGE_SECRET = "test-bridge-secret";
+  try {
+    const actor = {
+      controllerId: "controller-1",
+      memberKey: "jake",
+      displayName: "Jake",
+      email: "jake@example.com",
+    };
+    const token = mintOrcaChatEmbedToken(actor);
+    assert.deepEqual(verifyOrcaChatEmbedToken(`Bearer ${token}`), actor);
+    assert.equal(
+      verifyOrcaChatEmbedToken(`Bearer ${token.slice(0, -1)}x`),
+      null,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.ORCA_CHAT_BRIDGE_SECRET;
+    else process.env.ORCA_CHAT_BRIDGE_SECRET = previous;
+  }
 });

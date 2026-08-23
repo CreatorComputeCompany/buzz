@@ -80,6 +80,7 @@ type TestIdentity = {
   privateKey?: string;
   pubkey: string;
   signerUrl?: string;
+  signerToken?: string;
   username: string;
 };
 
@@ -6040,7 +6041,12 @@ async function signWithIdentity(
       method: "POST",
       credentials: "include",
       signal: AbortSignal.timeout(WEB_REQUEST_TIMEOUT_MS),
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(identity.signerToken
+          ? { Authorization: `Bearer ${identity.signerToken}` }
+          : {}),
+      },
       body: JSON.stringify(template),
     });
     await assertOk(response);

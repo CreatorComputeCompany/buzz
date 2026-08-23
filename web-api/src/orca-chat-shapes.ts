@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Event } from "nostr-tools";
 
 const CHANNEL_ID_PATTERN =
@@ -29,6 +29,15 @@ export type OrcaChatProfile = {
 };
 
 export type OrcaChatMember = OrcaChatProfile;
+
+const EMBED_TOKEN_VERSION = 1;
+const EMBED_TOKEN_TTL_SECONDS = 60 * 60;
+
+type OrcaChatEmbedClaims = {
+  v: typeof EMBED_TOKEN_VERSION;
+  actor: OrcaChatActor;
+  exp: number;
+};
 
 function tagValue(tags: RelayTag[], name: string): string | null {
   return tags.find((tag) => tag[0] === name)?.[1] ?? null;
@@ -139,6 +148,53 @@ export function validOrcaChatActor(value: unknown): OrcaChatActor {
     throw new Error("invalid_actor");
   }
   return actor as OrcaChatActor;
+}
+
+function embedTokenSignature(payload: string): string {
+  const secret = process.env.ORCA_CHAT_BRIDGE_SECRET;
+  if (!secret) throw new Error("user_chat_not_configured");
+  return createHmac("sha256", secret).update(payload).digest("base64url");
+}
+
+export function mintOrcaChatEmbedToken(actorValue: unknown): string {
+  const claims: OrcaChatEmbedClaims = {
+    v: EMBED_TOKEN_VERSION,
+    actor: validOrcaChatActor(actorValue),
+    exp: Math.floor(Date.now() / 1000) + EMBED_TOKEN_TTL_SECONDS,
+  };
+  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  return `${payload}.${embedTokenSignature(payload)}`;
+}
+
+export function verifyOrcaChatEmbedToken(
+  authorization: string | null,
+): OrcaChatActor | null {
+  if (!authorization?.startsWith("Bearer ")) return null;
+  const token = authorization.slice("Bearer ".length);
+  if (token.length > 4096) return null;
+  const [payload, observedSignature, extra] = token.split(".");
+  if (!payload || !observedSignature || extra) return null;
+  const wantedSignature = embedTokenSignature(payload);
+  const observed = Buffer.from(observedSignature);
+  const wanted = Buffer.from(wantedSignature);
+  if (observed.length !== wanted.length || !timingSafeEqual(observed, wanted)) {
+    return null;
+  }
+  try {
+    const claims = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as Partial<OrcaChatEmbedClaims>;
+    if (
+      claims.v !== EMBED_TOKEN_VERSION ||
+      typeof claims.exp !== "number" ||
+      claims.exp < Math.floor(Date.now() / 1000)
+    ) {
+      return null;
+    }
+    return validOrcaChatActor(claims.actor);
+  } catch {
+    return null;
+  }
 }
 
 export function authorizeOrcaChatBridge(
