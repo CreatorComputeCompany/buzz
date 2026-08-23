@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for a new Buzz Orca runtime bundle
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+RandomizedDelaySec=20s
+Unit=buzz-orca-update.service
+
+[Install]
+WantedBy=timers.target
