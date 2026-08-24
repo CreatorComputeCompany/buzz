@@ -1,9 +1,11 @@
 import type { Event } from "nostr-tools";
 import { pool } from "./auth.js";
 import {
+  decryptFromSelf,
   ensureIdentity,
   ensureRelayMembership,
   ensureRelayProfile,
+  promoteIdentityUserId,
   relayPost,
   signTemplate,
   type StoredIdentity,
@@ -15,6 +17,7 @@ import {
   parseOrcaChatChannel,
   parseOrcaChatProfile,
   parseOrcaChatRelayMemberPubkeys,
+  stableOrcaChatIdentityKey,
   validOrcaChatActor,
   type OrcaChatChannel,
   type OrcaChatMember,
@@ -23,6 +26,9 @@ import {
 
 const MAX_MESSAGE_LENGTH = 100_000;
 const HISTORY_LIMIT = 100;
+const CHAT_ACTIVITY_KINDS = [9, 40002, 45001, 45003];
+const CHAT_ACTIVITY_LIMIT = 5_000;
+const READ_STATE_KIND = 30078;
 
 type RelayTag = string[];
 
@@ -102,17 +108,126 @@ async function assertChannelAccess(
   return { channel, isMember: memberChannelIds.has(channelId) };
 }
 
+function readStateForIdentity(
+  identity: StoredIdentity,
+  events: Event[],
+): Map<string, number> {
+  const markers = new Map<string, number>();
+  for (const event of events) {
+    if (event.pubkey.toLowerCase() !== identity.pubkey.toLowerCase()) continue;
+    if (!event.tags.some((tag) => tag[0] === "t" && tag[1] === "read-state")) {
+      continue;
+    }
+    try {
+      const payload = JSON.parse(decryptFromSelf(identity, event.content)) as {
+        v?: unknown;
+        contexts?: unknown;
+      };
+      if (
+        payload.v !== 1 ||
+        !payload.contexts ||
+        typeof payload.contexts !== "object" ||
+        Array.isArray(payload.contexts)
+      ) {
+        continue;
+      }
+      for (const [contextId, timestamp] of Object.entries(payload.contexts)) {
+        if (
+          typeof timestamp === "number" &&
+          Number.isInteger(timestamp) &&
+          timestamp >= 0
+        ) {
+          markers.set(
+            contextId,
+            Math.max(markers.get(contextId) ?? 0, timestamp),
+          );
+        }
+      }
+    } catch {
+      // A bad or obsolete read-state slot must not hide the conversation list.
+    }
+  }
+  return markers;
+}
+
+async function addChannelActivity(
+  identity: StoredIdentity,
+  channels: OrcaChatChannel[],
+  memberChannelIds: Set<string>,
+): Promise<OrcaChatChannel[]> {
+  if (channels.length === 0 || memberChannelIds.size === 0) return channels;
+  const channelIds = [...memberChannelIds];
+  const [activityEvents, readStateEvents] = await Promise.all([
+    relayPost<Event[]>(identity, "/query", [
+      {
+        kinds: CHAT_ACTIVITY_KINDS,
+        "#h": channelIds,
+        limit: CHAT_ACTIVITY_LIMIT,
+      },
+    ]),
+    relayPost<Event[]>(identity, "/query", [
+      {
+        kinds: [READ_STATE_KIND],
+        authors: [identity.pubkey],
+        "#t": ["read-state"],
+        limit: 500,
+      },
+    ]),
+  ]);
+  const readState = readStateForIdentity(identity, readStateEvents);
+  const activityByChannel = new Map<
+    string,
+    { lastActivityAtMs: number; unreadCount: number }
+  >();
+  for (const event of activityEvents) {
+    const channelId = tagValue(event.tags as RelayTag[], "h");
+    if (!channelId || !memberChannelIds.has(channelId)) continue;
+    const activity = activityByChannel.get(channelId) ?? {
+      lastActivityAtMs: 0,
+      unreadCount: 0,
+    };
+    activity.lastActivityAtMs = Math.max(
+      activity.lastActivityAtMs,
+      event.created_at * 1_000,
+    );
+    if (
+      event.pubkey.toLowerCase() !== identity.pubkey.toLowerCase() &&
+      event.created_at > (readState.get(channelId) ?? 0)
+    ) {
+      activity.unreadCount += 1;
+    }
+    activityByChannel.set(channelId, activity);
+  }
+  return channels.map((channel) => ({
+    ...channel,
+    ...(activityByChannel.get(channel.id) ?? {
+      lastActivityAtMs: 0,
+      unreadCount: 0,
+    }),
+  }));
+}
+
 export async function identityForOrcaChatActor(
   actorValue: unknown,
 ): Promise<StoredIdentity> {
   const actor = validOrcaChatActor(actorValue);
-  let identityKey = `orca:${actor.controllerId}:${actor.memberKey}`;
+  let identityKey = stableOrcaChatIdentityKey(actor);
+  let matchedExistingBuzzUser = false;
   if (actor.email) {
     const matched = await pool.query<{ id: string }>(
       'SELECT id FROM "user" WHERE lower(email) = lower($1) LIMIT 1',
       [actor.email],
     );
-    if (matched.rows[0]?.id) identityKey = matched.rows[0].id;
+    if (matched.rows[0]?.id) {
+      identityKey = matched.rows[0].id;
+      matchedExistingBuzzUser = true;
+    }
+  }
+  if (!matchedExistingBuzzUser) {
+    await promoteIdentityUserId(
+      `orca:${actor.controllerId}:${actor.memberKey}`,
+      identityKey,
+    );
   }
   const identity = await ensureIdentity(identityKey);
   await ensureRelayMembership(identityKey, identity);
@@ -160,11 +275,21 @@ export async function bootstrapOrcaChat(
   actorValue: unknown,
 ): Promise<OrcaChatBootstrap> {
   const identity = await identityForOrcaChatActor(actorValue);
-  const [{ channels }, members] = await Promise.all([
+  const [{ channels, memberChannelIds }, members] = await Promise.all([
     memberChannels(identity),
     memberDirectory(identity),
   ]);
-  return { pubkey: identity.pubkey, channels, profiles: members, members };
+  const channelsWithActivity = await addChannelActivity(
+    identity,
+    channels,
+    memberChannelIds,
+  );
+  return {
+    pubkey: identity.pubkey,
+    channels: channelsWithActivity,
+    profiles: members,
+    members,
+  };
 }
 
 export async function openOrcaChatDm(

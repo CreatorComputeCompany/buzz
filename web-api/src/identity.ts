@@ -4,7 +4,12 @@ import {
   createHash,
   randomBytes,
 } from "node:crypto";
-import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
+import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+  nip44,
+} from "nostr-tools";
 import { pool } from "./auth.js";
 
 const RELAY_HTTP_URL = "https://imabird-buzz-relay.fly.dev";
@@ -22,6 +27,18 @@ export type EventTemplate = {
   createdAt?: number;
   tags: string[][];
 };
+
+async function ensureIdentityTable(): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS web_identity (
+      user_id TEXT PRIMARY KEY,
+      pubkey TEXT NOT NULL UNIQUE,
+      encrypted_secret TEXT NOT NULL,
+      relay_joined BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
 
 function encryptionKey(): Buffer {
   const encoded = process.env.IMABIRD_IDENTITY_ENCRYPTION_KEY;
@@ -55,16 +72,20 @@ function decryptSecret(value: string): Uint8Array {
   );
 }
 
+export function decryptFromSelf(
+  identity: StoredIdentity,
+  ciphertext: string,
+): string {
+  const secret = decryptSecret(identity.encryptedSecret);
+  const conversationKey = nip44.v2.utils.getConversationKey(
+    secret,
+    identity.pubkey,
+  );
+  return nip44.v2.decrypt(ciphertext, conversationKey);
+}
+
 export async function ensureIdentity(userId: string): Promise<StoredIdentity> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS web_identity (
-      user_id TEXT PRIMARY KEY,
-      pubkey TEXT NOT NULL UNIQUE,
-      encrypted_secret TEXT NOT NULL,
-      relay_joined BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
+  await ensureIdentityTable();
 
   const current = await pool.query<{
     pubkey: string;
@@ -103,6 +124,29 @@ export async function ensureIdentity(userId: string): Promise<StoredIdentity> {
     encryptedSecret: row.encrypted_secret,
     relayJoined: row.relay_joined,
   };
+}
+
+export async function promoteIdentityUserId(
+  legacyUserId: string,
+  stableUserId: string,
+): Promise<void> {
+  if (legacyUserId === stableUserId) return;
+  await ensureIdentityTable();
+  try {
+    await pool.query(
+      `UPDATE web_identity AS legacy
+       SET user_id = $2
+       WHERE legacy.user_id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM web_identity AS stable WHERE stable.user_id = $2
+         )`,
+      [legacyUserId, stableUserId],
+    );
+  } catch (error) {
+    // Concurrent first requests can race to establish the permanent key. The
+    // winning row is authoritative; the losing legacy row remains harmless.
+    if ((error as { code?: string }).code !== "23505") throw error;
+  }
 }
 
 export function signTemplate(

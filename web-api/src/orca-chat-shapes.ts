@@ -20,6 +20,8 @@ export type OrcaChatChannel = {
   type: "channel" | "dm";
   visibility: "open" | "private";
   participantPubkeys: string[];
+  lastActivityAtMs: number;
+  unreadCount: number;
 };
 
 export type OrcaChatProfile = {
@@ -67,7 +69,14 @@ export function parseOrcaChatChannel(event: Event): OrcaChatChannel | null {
     type: isDm ? "dm" : "channel",
     visibility: isPrivate ? "private" : "open",
     participantPubkeys: isDm ? tagValues(tags, "p") : [],
+    lastActivityAtMs: 0,
+    unreadCount: 0,
   };
+}
+
+export function stableOrcaChatIdentityKey(actorValue: unknown): string {
+  const actor = validOrcaChatActor(actorValue);
+  return `orca-member:${actor.memberKey}`;
 }
 
 export function parseOrcaChatProfile(event: Event): OrcaChatProfile {

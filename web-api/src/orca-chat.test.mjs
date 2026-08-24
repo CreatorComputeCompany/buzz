@@ -7,6 +7,7 @@ import {
   parseOrcaChatChannel,
   parseOrcaChatProfile,
   parseOrcaChatRelayMemberPubkeys,
+  stableOrcaChatIdentityKey,
   verifyOrcaChatEmbedToken,
 } from "./orca-chat-shapes.ts";
 
@@ -41,6 +42,8 @@ test("parses channels and DMs from Buzz metadata", () => {
       type: "channel",
       visibility: "open",
       participantPubkeys: [],
+      lastActivityAtMs: 0,
+      unreadCount: 0,
     },
   );
   assert.deepEqual(
@@ -53,8 +56,25 @@ test("parses channels and DMs from Buzz metadata", () => {
       type: "dm",
       visibility: "private",
       participantPubkeys: ["d".repeat(64)],
+      lastActivityAtMs: 0,
+      unreadCount: 0,
     },
   );
+});
+
+test("keys an unlinked Orca member independently of runtime restarts", () => {
+  const first = stableOrcaChatIdentityKey({
+    controllerId: "runtime-one",
+    memberKey: "jake",
+    displayName: "Jake",
+  });
+  const restarted = stableOrcaChatIdentityKey({
+    controllerId: "runtime-two",
+    memberKey: "jake",
+    displayName: "Jake",
+  });
+  assert.equal(first, "orca-member:jake");
+  assert.equal(restarted, first);
 });
 
 test("uses profile display names with a pubkey fallback", () => {
